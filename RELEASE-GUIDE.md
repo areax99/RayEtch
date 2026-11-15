@@ -102,13 +102,23 @@ The native MSVC C++ build tools and resource compiler must be available to Rust.
 
 #### Linux
 
-On the Linux computer, after installing the native packages listed above, the simplest option is to build and install RayEtch for the current user, including an application-menu entry:
+On the Linux computer, after installing the native packages listed above, run one of these commands from the project root:
+
+To build only the executable:
+
+```sh
+cargo build --release
+```
+
+It is created at `target/release/rayetch`.
+
+For a full installation for the current user (no `sudo`), including an application-menu entry:
 
 ```sh
 sh scripts/install-linux.sh
 ```
 
-The script runs `cargo build --release`, then installs the executable, icon, and application-menu entry. If you only want to build the executable without installing it, run `cargo build --release`; it is created at `target/release/rayetch`. The destination computer must also provide the required system libraries.
+The script runs `cargo build --release` and installs the executable in `~/.local/bin`, the icons and `.rayetch` file association in the user's data directories, and a launcher in the applications menu. If `rayetch` cannot be found in a terminal, add `~/.local/bin` to your `PATH`. The destination computer must also provide the required system libraries.
 
 ### Verify the build
 
@@ -336,13 +346,23 @@ Rust debe tener acceso a las herramientas nativas de compilación C++ de MSVC y 
 
 #### Linux
 
-En el ordenador Linux, después de instalar los paquetes nativos indicados, la opción más sencilla es compilar e instalar RayEtch para el usuario actual, incluyendo una entrada en el menú de aplicaciones:
+En el ordenador Linux, después de instalar los paquetes nativos indicados, ejecuta uno de estos comandos desde la raíz del proyecto:
+
+Para compilar solo el ejecutable:
+
+```sh
+cargo build --release
+```
+
+Se crea en `target/release/rayetch`.
+
+Para una instalación completa para el usuario actual (sin `sudo`), incluida una entrada en el menú de aplicaciones:
 
 ```sh
 sh scripts/install-linux.sh
 ```
 
-El script ejecuta `cargo build --release` y después instala el ejecutable, el icono y la entrada del menú de aplicaciones. Si solo quieres compilar el ejecutable sin instalarlo, ejecuta `cargo build --release`; se crea en `target/release/rayetch`. El equipo de destino también debe tener las bibliotecas de sistema necesarias.
+El script ejecuta `cargo build --release` e instala el ejecutable en `~/.local/bin`, los iconos y la asociación de archivos `.rayetch` en las carpetas de datos del usuario, y un lanzador en el menú de aplicaciones. Si no se encuentra `rayetch` en la terminal, añade `~/.local/bin` a `PATH`. El equipo de destino también debe tener las bibliotecas de sistema necesarias.
 
 ### Verificar la compilación
 
@@ -448,13 +468,23 @@ Les outils natifs de compilation C++ MSVC et le compilateur de ressources doiven
 
 #### Linux
 
-Sur l'ordinateur Linux, après avoir installé les paquets natifs indiqués ci-dessus, le plus simple est de compiler et d'installer RayEtch pour l'utilisateur actuel, avec une entrée dans le menu des applications :
+Sur l'ordinateur Linux, après avoir installé les paquets natifs indiqués ci-dessus, exécutez l'une de ces commandes depuis la racine du projet :
+
+Pour compiler uniquement l'exécutable :
+
+```sh
+cargo build --release
+```
+
+Il est créé dans `target/release/rayetch`.
+
+Pour une installation complète pour l'utilisateur actuel (sans `sudo`), avec une entrée dans le menu des applications :
 
 ```sh
 sh scripts/install-linux.sh
 ```
 
-Le script exécute `cargo build --release`, puis installe l'exécutable, l'icône et l'entrée du menu des applications. Si vous souhaitez uniquement compiler l'exécutable sans l'installer, exécutez `cargo build --release` ; il est créé dans `target/release/rayetch`. L'ordinateur doit également disposer des bibliothèques système requises.
+Le script exécute `cargo build --release` et installe l'exécutable dans `~/.local/bin`, les icônes et l'association des fichiers `.rayetch` dans les répertoires de données de l'utilisateur, ainsi qu'un lanceur dans le menu des applications. Si `rayetch` est introuvable dans un terminal, ajoutez `~/.local/bin` au `PATH`. L'ordinateur doit également disposer des bibliothèques système requises.
 
 ### Vérifier la compilation
 
@@ -560,13 +590,23 @@ Die nativen MSVC-C++-Build-Werkzeuge und der Ressourcencompiler müssen für Rus
 
 #### Linux
 
-Am einfachsten ist es, RayEtch nach der Installation der oben genannten nativen Pakete für den aktuellen Benutzer zu kompilieren und zu installieren, einschließlich eines Eintrags im Anwendungsmenü:
+Führe auf dem Linux-Rechner nach der Installation der oben genannten nativen Pakete einen dieser Befehle im Projekt-Hauptverzeichnis aus:
+
+Nur die ausführbare Datei kompilieren:
+
+```sh
+cargo build --release
+```
+
+Sie wird unter `target/release/rayetch` erstellt.
+
+Für eine vollständige Installation für den aktuellen Benutzer (ohne `sudo`), einschließlich eines Eintrags im Anwendungsmenü:
 
 ```sh
 sh scripts/install-linux.sh
 ```
 
-Das Skript führt `cargo build --release` aus und installiert anschließend die ausführbare Datei, das Symbol und den Eintrag im Anwendungsmenü. Wenn du die ausführbare Datei nur erstellen, aber nicht installieren möchtest, führe `cargo build --release` aus; sie wird unter `target/release/rayetch` erstellt. Die benötigten Systembibliotheken müssen auch auf dem Zielrechner vorhanden sein.
+Das Skript führt `cargo build --release` aus und installiert die ausführbare Datei unter `~/.local/bin`, die Symbole und die `.rayetch`-Dateizuordnung in den Datenverzeichnissen des Benutzers sowie einen Starter im Anwendungsmenü. Wenn `rayetch` im Terminal nicht gefunden wird, füge `~/.local/bin` zum `PATH` hinzu. Die benötigten Systembibliotheken müssen auch auf dem Zielrechner vorhanden sein.
 
 ### Build überprüfen
 
