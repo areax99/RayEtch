@@ -9,7 +9,8 @@ cargo build --release
 BIN="$HOME/.local/bin"
 ICONS="$HOME/.local/share/icons/hicolor"
 APPS="$HOME/.local/share/applications"
-mkdir -p "$BIN" "$APPS"
+PIXMAPS="$HOME/.local/share/pixmaps"
+mkdir -p "$BIN" "$APPS" "$PIXMAPS"
 
 # the program
 install -m 755 target/release/rayetch "$BIN/rayetch"
@@ -23,6 +24,7 @@ for S in 48 64 128 256 512; do
 done
 mkdir -p "$ICONS/1024x1024/apps"
 cp assets/icon.png "$ICONS/1024x1024/apps/rayetch.png"
+install -m 644 assets/icon.png "$PIXMAPS/rayetch.png"
 
 # the icon of saved projects (.rayetch files) and their file type
 MIME="$HOME/.local/share/mime"
@@ -40,9 +42,11 @@ command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$MIME" 
 # the menu entry
 # Escape both desktop-entry strings and Exec arguments, including literal field-code markers.
 EXEC_PATH=$(printf '%s\n' "$BIN/rayetch" | sed 's/\\/\\\\\\\\/g; s/["`$]/\\\\&/g; s/%/%%/g')
+ICON_PATH=$(printf '%s\n' "$PIXMAPS/rayetch.png" | sed 's/\\/\\\\/g')
 while IFS= read -r LINE; do
   case "$LINE" in
     Exec=*) printf 'Exec="%s" %%f\n' "$EXEC_PATH" ;;
+    Icon=*) printf 'Icon=%s\n' "$ICON_PATH" ;;
     *) printf '%s\n' "$LINE" ;;
   esac
 done < packaging/linux/rayetch.desktop > "$APPS/rayetch.desktop"
