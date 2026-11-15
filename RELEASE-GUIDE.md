@@ -132,6 +132,14 @@ sh scripts/install-linux.sh
 
 The script runs `cargo build --release` and installs the executable in `~/.local/bin`, the icons and `.rayetch` file association in the user's data directories, and a launcher in the applications menu. If `rayetch` cannot be found in a terminal, add `~/.local/bin` to your `PATH`. The destination computer must also provide the required system libraries.
 
+To create a Linux distribution archive on the Linux build computer:
+
+```sh
+sh scripts/package-linux-installer.sh
+```
+
+The `.tar.gz` archive is created in `release-archives/`. On the target computer, extract it and run `sh install.sh` from the extracted folder to install RayEtch for the current user without `sudo`. Run `sh uninstall.sh` from that folder to remove it. Build and target computers must use the same supported architecture, and the target must provide the required system libraries.
+
 ### Verify the build
 
 Confirm that the build finishes without errors, then launch the app or executable on the target operating system. If possible, test it on another computer as well. macOS builds are signed locally, not notarized by Apple, so macOS may ask you to authorize the app before opening it.
@@ -265,6 +273,14 @@ sh scripts/install-linux.sh
 ```
 
 Lo script esegue `cargo build --release` e installa l'eseguibile in `~/.local/bin`, le icone e l'associazione dei file `.rayetch` nella cartella dati dell'utente, e il lanciatore nel menu delle applicazioni. Se `rayetch` non viene trovato dal terminale, aggiungi `~/.local/bin` al `PATH`. Il computer di destinazione deve avere anche le librerie di sistema necessarie.
+
+Per creare un archivio di distribuzione Linux sul computer Linux di compilazione:
+
+```sh
+sh scripts/package-linux-installer.sh
+```
+
+L'archivio `.tar.gz` viene creato in `release-archives/`. Sul computer di destinazione, estrailo ed esegui `sh install.sh` dalla cartella estratta per installare RayEtch per l'utente corrente senza `sudo`. Per rimuoverlo, esegui `sh uninstall.sh` dalla stessa cartella. I due computer devono usare la stessa architettura supportata e quello di destinazione deve disporre delle librerie di sistema necessarie.
 
 ### Verificare la compilazione
 
@@ -400,6 +416,14 @@ sh scripts/install-linux.sh
 
 El script ejecuta `cargo build --release` e instala el ejecutable en `~/.local/bin`, los iconos y la asociación de archivos `.rayetch` en las carpetas de datos del usuario, y un lanzador en el menú de aplicaciones. Si no se encuentra `rayetch` en la terminal, añade `~/.local/bin` a `PATH`. El equipo de destino también debe tener las bibliotecas de sistema necesarias.
 
+Para crear un archivo de distribución de Linux en el equipo Linux de compilación:
+
+```sh
+sh scripts/package-linux-installer.sh
+```
+
+El archivo `.tar.gz` se crea en `release-archives/`. En el equipo de destino, extráelo y ejecuta `sh install.sh` desde la carpeta extraída para instalar RayEtch para el usuario actual, sin `sudo`. Para desinstalarlo, ejecuta `sh uninstall.sh` desde esa carpeta. Ambos equipos deben usar la misma arquitectura compatible y el equipo de destino debe tener las bibliotecas del sistema necesarias.
+
 ### Verificar la compilación
 
 Comprueba que la compilación termine sin errores y ejecuta la aplicación o el archivo ejecutable en el sistema operativo previsto. Si es posible, pruébalo también en otro ordenador. Apple no notariza las compilaciones de macOS, por lo que quizá tengas que autorizar la aplicación antes de abrirla.
@@ -534,6 +558,14 @@ sh scripts/install-linux.sh
 
 Le script exécute `cargo build --release` et installe l'exécutable dans `~/.local/bin`, les icônes et l'association des fichiers `.rayetch` dans les répertoires de données de l'utilisateur, ainsi qu'un lanceur dans le menu des applications. Si `rayetch` est introuvable dans un terminal, ajoutez `~/.local/bin` au `PATH`. L'ordinateur doit également disposer des bibliothèques système requises.
 
+Pour créer une archive de distribution Linux sur l'ordinateur Linux de compilation :
+
+```sh
+sh scripts/package-linux-installer.sh
+```
+
+L'archive `.tar.gz` est créée dans `release-archives/`. Sur l'ordinateur cible, extrayez-la et exécutez `sh install.sh` depuis le dossier extrait pour installer RayEtch pour l'utilisateur actuel, sans `sudo`. Pour le désinstaller, exécutez `sh uninstall.sh` depuis ce dossier. Les deux ordinateurs doivent utiliser la même architecture prise en charge et l'ordinateur cible doit disposer des bibliothèques système requises.
+
 ### Vérifier la compilation
 
 Vérifiez que la compilation se termine sans erreur, puis lancez l'application ou l'exécutable sur le système d'exploitation prévu. Si possible, testez-le également sur un autre ordinateur. Apple ne notarie pas les compilations macOS ; il peut donc être nécessaire d'autoriser l'application avant de l'ouvrir.
@@ -667,6 +699,14 @@ sh scripts/install-linux.sh
 ```
 
 Das Skript führt `cargo build --release` aus und installiert die ausführbare Datei unter `~/.local/bin`, die Symbole und die `.rayetch`-Dateizuordnung in den Datenverzeichnissen des Benutzers sowie einen Starter im Anwendungsmenü. Wenn `rayetch` im Terminal nicht gefunden wird, füge `~/.local/bin` zum `PATH` hinzu. Die benötigten Systembibliotheken müssen auch auf dem Zielrechner vorhanden sein.
+
+So erstellst du ein Linux-Distributionsarchiv auf dem Linux-Buildrechner:
+
+```sh
+sh scripts/package-linux-installer.sh
+```
+
+Das `.tar.gz`-Archiv wird in `release-archives/` erstellt. Entpacke es auf dem Zielrechner und führe im entpackten Ordner `sh install.sh` aus, um RayEtch ohne `sudo` für den aktuellen Benutzer zu installieren. Mit `sh uninstall.sh` aus demselben Ordner kannst du es wieder entfernen. Beide Rechner müssen dieselbe unterstützte Architektur verwenden; auf dem Zielrechner müssen außerdem die erforderlichen Systembibliotheken vorhanden sein.
 
 ### Build überprüfen
 
