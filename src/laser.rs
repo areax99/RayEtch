@@ -27,6 +27,8 @@ pub enum Ev {
     /// `pos`: the machine position (MPos); `work`: the work position (WPos). GRBL reports one of
     /// them; the other comes from the last work offset (WCO) it sent.
     Status { state: String, pos: Option<[f64; 2]>, work: Option<[f64; 2]> },
+    /// A port that could not be opened for a reason the person can fix (permission, busy)
+    PortProblem(String),
 }
 
 pub struct Laser {
@@ -53,6 +55,13 @@ pub fn list_ports() -> Vec<String> {
     serialport::available_ports().map(|v| v.into_iter().map(|p| p.port_name).collect()).unwrap_or_default()
 }
 
+/// The ports the system says are USB devices, whatever their name (a laser board on USB).
+pub fn usb_ports() -> Vec<String> {
+    serialport::available_ports()
+        .map(|v| v.into_iter().filter(|p| matches!(p.port_type, serialport::SerialPortType::UsbPort(_))).map(|p| p.port_name).collect())
+        .unwrap_or_default()
+}
+
 fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
     let mut port: Option<Box<dyn serialport::SerialPort>> = None;
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -75,14 +84,40 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
             Ok(cmd) => match cmd {
                 Cmd::Connect(name, baud) => {
                     port = None;
-                    match serialport::new(&name, baud).timeout(Duration::from_millis(5)).open() {
-                        Ok(p) => {
+                    // DTR and RTS on, as macOS and Linux do when a port opens: on Windows the
+                    // serial library leaves both off, and many laser boards (CH340 Arduinos, USB
+                    // CDC boards) then never answer, so the laser was not found there
+                    match serialport::new(&name, baud).timeout(Duration::from_millis(5)).dtr_on_open(true).open() {
+                        Ok(mut p) => {
+                            let _ = p.write_request_to_send(true);
+                            // a blank line wakes boards that don't restart on opening; the status
+                            // queries below then get an answer
+                            let _ = p.write_all(b"\r\n");
                             port = Some(p);
                             queue.clear();
                             waiting_ok = false;
                             emit(Ev::Connected(name), &tx);
                         }
-                        Err(e) => emit(Ev::Disconnected(trf("Impossibile aprire {}: {}", &[&name, &e])), &tx),
+                        Err(e) => {
+                            // a port the system won't open (no permission, or another program has
+                            // it) is said plainly instead of passed over in silence
+                            let low = e.to_string().to_lowercase();
+                            let hint = if low.contains("permission") || low.contains("access is denied") || low.contains("accesso negato") {
+                                if cfg!(windows) {
+                                    Some(trf("La porta {} è occupata: chiudi gli altri programmi che usano il laser (LightBurn, LaserGRBL…).", &[&name]))
+                                } else {
+                                    Some(trf("Permesso negato su {}: aggiungi il tuo utente al gruppo dialout (sudo usermod -aG dialout $USER), poi esci e rientra.", &[&name]))
+                                }
+                            } else if low.contains("busy") || low.contains("in use") {
+                                Some(trf("La porta {} è occupata: chiudi gli altri programmi che usano il laser (LightBurn, LaserGRBL…).", &[&name]))
+                            } else {
+                                None
+                            };
+                            match hint {
+                                Some(h) => emit(Ev::PortProblem(h), &tx),
+                                None => emit(Ev::Disconnected(trf("Impossibile aprire {}: {}", &[&name, &e])), &tx),
+                            }
+                        }
                     }
                 }
                 Cmd::Disconnect => {
@@ -224,6 +259,7 @@ mod tests {
                     Ev::Disconnected(r) => println!("HW disconnected {r}"),
                     Ev::Progress(a, b) => println!("HW progress {a}/{b}"),
                     Ev::JobDone => println!("HW job done"),
+                    Ev::PortProblem(m) => println!("HW port problem {m}"),
                 }
                 if f(&e) {
                     return true;

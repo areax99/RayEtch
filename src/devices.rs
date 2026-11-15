@@ -225,6 +225,8 @@ fn scan(tx: Sender<ScanMsg>, ctx: egui::Context) {
 fn probe(port: &str, baud: u32) -> Option<Found> {
     let mut p = serialport::new(port, baud).timeout(Duration::from_millis(50)).open().ok()?;
     let _ = p.write_data_terminal_ready(true);
+    // RTS too: on Windows both start off, and some boards only talk with both on
+    let _ = p.write_request_to_send(true);
     std::thread::sleep(Duration::from_millis(RETRY_PAUSE_MS));
     // Opening resets most Arduino-style boards, which then greet; others are asked with a
     // soft reset (Ctrl-X) after an empty line.

@@ -96,8 +96,9 @@ pub const MIN_SCREEN: [f32; 2] = [1280.0, 760.0];
 pub const AUTOCONNECT_NEXT: Duration = Duration::from_millis(300);
 /// Wait after a full round of ports found no laser (estimated).
 pub const AUTOCONNECT_RETRY: Duration = Duration::from_secs(3);
-/// How long an opened port has to answer like a GRBL laser (estimated).
-pub const AUTOCONNECT_VERIFY: Duration = Duration::from_secs(4);
+/// How long an opened port has to answer like a GRBL laser (estimated): boards that restart
+/// when the port opens (ESP32 ones such as the MKS DLC32) need a few seconds to boot.
+pub const AUTOCONNECT_VERIFY: Duration = Duration::from_secs(7);
 
 pub struct AutoConnect {
     pub queue: Vec<String>,
@@ -125,6 +126,13 @@ fn excluded_by_file(name: &str) -> bool {
     std::fs::read_to_string(dir.join("PortExclude.txt"))
         .map(|t| t.lines().any(|l| l.trim() == name))
         .unwrap_or(false)
+}
+
+/// Ports never tried even when the system lists them as USB (the person's PortExclude.txt and
+/// the macOS system ports).
+fn auto_port_excluded(p: &str) -> bool {
+    let name = p.rsplit('/').next().unwrap_or(p);
+    EXCLUDED_PORTS.iter().any(|e| name == *e) || excluded_by_file(name)
 }
 
 pub fn auto_port_order(chosen: &str, ports: &[String]) -> Vec<String> {
@@ -1195,6 +1203,15 @@ impl RayEtch {
         if ac.queue.is_empty() {
             self.ports = crate::laser::list_ports();
             ac.queue = auto_port_order(&self.port_sel, &self.ports);
+            // every port the system knows is USB is tried too, whatever its name (Linux and
+            // Windows name them differently from macOS)
+            if self.port_sel.is_empty() {
+                for p in crate::laser::usb_ports() {
+                    if !ac.queue.contains(&p) && !auto_port_excluded(&p) {
+                        ac.queue.push(p);
+                    }
+                }
+            }
             if ac.queue.is_empty() {
                 ac.next_try = now + AUTOCONNECT_RETRY;
                 self.machine_state = tr("In cerca del laser…").into();
@@ -1250,6 +1267,20 @@ impl RayEtch {
                         self.machine_state = tr("Scollegato").into();
                         self.status = m;
                     }
+                }
+                Ev::PortProblem(m) => {
+                    // the port couldn't be opened for a reason the person can fix: say it once,
+                    // in the status bar and the console, and keep looking on the other ports
+                    let ac = &mut self.autocon;
+                    ac.pending = false;
+                    ac.quiet = false;
+                    ac.next_try = Instant::now() + if ac.queue.is_empty() { AUTOCONNECT_RETRY } else { AUTOCONNECT_NEXT };
+                    self.connected = None;
+                    if self.console.last() != Some(&m) {
+                        self.console.push(m.clone());
+                    }
+                    self.status = m;
+                    self.machine_state = tr("Laser non accessibile").into();
                 }
                 Ev::Received(l) => {
                     let low = l.to_ascii_lowercase();
