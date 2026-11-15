@@ -66,6 +66,7 @@ fn main() -> eframe::Result<()> {
     let viewport = viewport.with_decorations(false);
     let options = eframe::NativeOptions {
         viewport,
+        renderer: renderer(),
         ..Default::default()
     };
     eframe::run_native(
@@ -113,6 +114,19 @@ fn main() -> eframe::Result<()> {
 
 /// The window and Dock/taskbar icon, built into the program (assets/icon.png, made by
 /// `cargo run --example make_icon`).
+/// How the window is drawn. On Windows with wgpu (DirectX 12 or Vulkan): many Windows PCs
+/// (integrated graphics, old drivers, virtual machines, Remote Desktop) only have a slow software
+/// OpenGL, which made the program crawl there. macOS and Linux keep OpenGL, which works well
+/// on them. RAYETCH_RENDERER=glow or =wgpu overrides it, should a computer draw badly.
+fn renderer() -> eframe::Renderer {
+    match std::env::var("RAYETCH_RENDERER").map(|v| v.to_ascii_lowercase()) {
+        Ok(v) if v == "glow" || v == "opengl" => eframe::Renderer::Glow,
+        Ok(v) if v == "wgpu" => eframe::Renderer::Wgpu,
+        _ if cfg!(windows) => eframe::Renderer::Wgpu,
+        _ => eframe::Renderer::Glow,
+    }
+}
+
 fn app_icon() -> eframe::egui::IconData {
     let png = include_bytes!("../assets/icon.png");
     match image::load_from_memory(png) {

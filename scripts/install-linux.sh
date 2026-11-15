@@ -58,5 +58,18 @@ if [ -f "$ICONS/index.theme" ] && command -v gtk-update-icon-cache >/dev/null 2>
   gtk-update-icon-cache -f -q "$ICONS"
 fi
 
+# access to USB serial lasers without the dialout group or logging out (asks for the password
+# once; skipped if already there). RayEtch also offers this itself the first time a port is refused.
+RULE=/etc/udev/rules.d/70-rayetch-laser.rules
+if [ ! -f "$RULE" ] && command -v sudo >/dev/null 2>&1; then
+  echo "RayEtch needs permission to use USB lasers; your password may be asked."
+  if sudo install -m 644 packaging/linux/70-rayetch-laser.rules "$RULE"; then
+    sudo udevadm control --reload-rules || true
+    sudo udevadm trigger --subsystem-match=tty --action=add || true
+  else
+    echo "Laser access not set up now; RayEtch will offer it when it finds the laser." >&2
+  fi
+fi
+
 echo "Installed: $BIN/rayetch — RayEtch is in the applications menu."
 echo "If 'rayetch' is not found in a terminal, add ~/.local/bin to your PATH."

@@ -183,6 +183,11 @@ pub struct RayEtch {
     pub device_tab: usize,
     pub scan_row: Option<usize>,
     pub checklist_text: Option<String>,
+    /// Linux: a port the system refused, offered to be opened up; ports put off with "Più tardi";
+    /// and the password request running in the background
+    pub port_denied: Option<String>,
+    pub port_access_later: Vec<String>,
+    pub port_access_job: Option<std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>>,
     /// the Modifica testo window: the text shape and the words being edited
     pub text_edit: Option<(u64, String)>,
     pub current_layer: usize,
@@ -204,6 +209,8 @@ pub struct RayEtch {
     pub machine_state: String,
     pub head_pos: Option<P2>,
     pub job_progress: Option<(usize, usize)>,
+    /// the running job's clock: when it started, its estimated length (s), the pauses so far
+    pub job_timer: Option<JobTimer>,
     pub paused: bool,
     pub console: Vec<String>,
     pub console_input: String,
@@ -399,6 +406,17 @@ impl RayEtch {
             }
             // RAYETCH_OPEN=legend: a black cut rectangle and a red filled ellipse, then the preview
             // (its legend tells the two apart)
+            // RAYETCH_OPEN=portaccess (for testing): the Linux "Accesso al laser" window
+            // RAYETCH_OPEN=jobtimes (for testing): a job 40 % sent, started 5 minutes ago, estimated 12
+            if v.contains("jobtimes") {
+                app.job_progress = Some((400, 1000));
+                let mut t = JobTimer::new(720.0);
+                t.start = Instant::now() - Duration::from_secs(300);
+                app.job_timer = Some(t);
+            }
+            if v.contains("portaccess") {
+                app.port_denied = Some("/dev/ttyUSB0".into());
+            }
             if v.contains("legend") {
                 app.doc.add_shape(Shape::new(0, Geometry::Rect { w: 70.0, h: 140.0, radius: 0.0 }, 0, 120.0, 200.0));
                 app.doc.layers[2].mode = CutMode::Fill;
@@ -514,6 +532,9 @@ impl RayEtch {
             device_tab: 0,
             scan_row: None,
             checklist_text: None,
+            port_denied: None,
+            port_access_later: Vec::new(),
+            port_access_job: None,
             text_edit: None,
             current_layer: 0,
             selected_row: None,
@@ -530,6 +551,7 @@ impl RayEtch {
             machine_state: tr("Scollegato").into(),
             head_pos: None,
             job_progress: None,
+            job_timer: None,
             paused: false,
             console: vec![tr("RayEtch 1.0 — software laser libero, licenza open source Apache 2.0. Nessuna attivazione richiesta.").into()],
             console_input: String::new(),
@@ -1114,6 +1136,7 @@ impl RayEtch {
         let n = lines.len();
         self.laser.send(Cmd::Lines(lines, true));
         self.job_progress = Some((0, 1));
+        self.job_timer = Some(JobTimer::new(job.estimate_seconds_sim(&crate::gcode::Job::sim_for(&self.doc))));
         self.paused = false;
         self.status = tr("Lavoro avviato").into();
         // "Salva registro lavori": one line per job in joblog.csv beside the settings
@@ -1133,6 +1156,8 @@ impl RayEtch {
             if let Ok(s) = std::fs::read_to_string(&p) {
                 self.laser.send(Cmd::Lines(s.lines().map(|l| l.to_string()).collect(), true));
                 self.job_progress = Some((0, 1));
+                // a G-code file has no estimate: the times follow its pace
+                self.job_timer = Some(JobTimer::new(0.0));
                 self.status = trf("In esecuzione {}", &[&p.display()]);
             }
         }
@@ -1266,6 +1291,23 @@ impl RayEtch {
                         self.console.push(m.clone());
                         self.machine_state = tr("Scollegato").into();
                         self.status = m;
+                    }
+                }
+                Ev::PortDenied(port) => {
+                    // Linux refused the port: keep looking, and offer to open it up (device_ui)
+                    let ac = &mut self.autocon;
+                    ac.pending = false;
+                    ac.quiet = false;
+                    ac.next_try = Instant::now() + if ac.queue.is_empty() { AUTOCONNECT_RETRY } else { AUTOCONNECT_NEXT };
+                    self.connected = None;
+                    let m = trf("RayEtch non ha il permesso di usare {}: premi «Consenti l'accesso al laser».", &[&port]);
+                    if self.console.last() != Some(&m) {
+                        self.console.push(m.clone());
+                    }
+                    self.status = m;
+                    self.machine_state = tr("Laser non accessibile").into();
+                    if !self.port_access_later.contains(&port) && self.port_access_job.is_none() {
+                        self.port_denied = Some(port);
                     }
                 }
                 Ev::PortProblem(m) => {
@@ -2100,6 +2142,13 @@ impl eframe::App for RayEtch {
             }
         }
         self.autosave(&ctx);
+        // the job clock: stopped while paused, gone when the job is; the times tick each second
+        if self.job_progress.is_none() {
+            self.job_timer = None;
+        } else if let Some(t) = self.job_timer.as_mut() {
+            t.set_paused(self.paused);
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
         self.screen_size_check(&ctx);
         crate::panels::SPEED_MM_S.store(self.doc.device.speed_mm_s, std::sync::atomic::Ordering::Relaxed);
         if let Some(t) = self.clip_out.take() {
@@ -2259,6 +2308,63 @@ impl RayEtch {
     }
 }
 
+/// The clock of a running job, for the times under the laser buttons.
+pub struct JobTimer {
+    pub start: Instant,
+    /// estimated length from the preview's motion model, seconds (0 = unknown)
+    pub estimate: f64,
+    pub paused_at: Option<Instant>,
+    pub paused_total: Duration,
+}
+
+impl JobTimer {
+    pub fn new(estimate: f64) -> Self {
+        JobTimer { start: Instant::now(), estimate, paused_at: None, paused_total: Duration::ZERO }
+    }
+
+    /// Seconds the job has been running, pauses left out.
+    pub fn elapsed(&self) -> f64 {
+        let now = self.paused_at.unwrap_or_else(Instant::now);
+        now.saturating_duration_since(self.start).saturating_sub(self.paused_total).as_secs_f64()
+    }
+
+    /// Seconds left, from how far the job has got (`done` of 0..1): the pace so far once a
+    /// little of it has run, blended with the estimate early on when the pace says little yet.
+    pub fn remaining(&self, done: f64) -> Option<f64> {
+        let e = self.elapsed();
+        let f = done.clamp(0.0, 1.0);
+        let by_pace = (f > 0.0).then(|| e * (1.0 - f) / f);
+        let by_estimate = (self.estimate > 0.0).then(|| (self.estimate - e).max(0.0));
+        match (by_pace, by_estimate) {
+            (Some(p), Some(s)) => {
+                // trust the pace more as the job goes on (fully from a quarter of the way)
+                let w = (f / 0.25).min(1.0);
+                Some(p * w + s * (1.0 - w))
+            }
+            (Some(p), None) => (f > 0.02).then_some(p),
+            (None, s) => s,
+        }
+    }
+
+    /// Keep the clock still while the job is paused.
+    pub fn set_paused(&mut self, paused: bool) {
+        match (paused, self.paused_at) {
+            (true, None) => self.paused_at = Some(Instant::now()),
+            (false, Some(t)) => {
+                self.paused_total += t.elapsed();
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// "h:mm:ss" or "m:ss".
+pub fn clock_text(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+}
+
 /// Start of the text RayEtch puts on the system clipboard for copied shapes.
 pub const CLIP_MARK: &str = "RAYETCH-SHAPES\n";
 /// The same mark from before the program was renamed (BeamForge), still read on paste.
@@ -2302,4 +2408,24 @@ fn utc_now() -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, (rem / 60) % 60)
+}
+
+#[cfg(test)]
+mod job_timer_tests {
+    use super::*;
+
+    #[test]
+    fn remaining_follows_pace_and_estimate() {
+        // 5 minutes in, 40 % done, estimated 12 minutes
+        let mut t = JobTimer::new(720.0);
+        t.start = Instant::now() - Duration::from_secs(300);
+        let r = t.remaining(0.4).unwrap();
+        // from the pace alone 450 s are left; past a quarter the pace is trusted fully
+        assert!((r - 450.0).abs() < 2.0, "{r}");
+        // at the start only the estimate speaks
+        let fresh = JobTimer::new(600.0);
+        assert!((fresh.remaining(0.0).unwrap() - 600.0).abs() < 1.0);
+        assert_eq!(clock_text(3725.0), "1:02:05");
+        assert_eq!(clock_text(65.0), "1:05");
+    }
 }

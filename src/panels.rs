@@ -903,9 +903,18 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
             let has = b.is_valid();
             let a = if has { b.anchor(app.anchor) } else { [0.0, 0.0] };
             let (mut x, mut y, mut w, mut h) = (a[0], a[1], if has { b.w() } else { 0.0 }, if has { b.h() } else { 0.0 });
-            if app.rot_for != app.selection {
-                // the Ruota box holds an amount to turn by, not the shape's angle, so it is kept
+            // the Ruota box shows the selection's angle (its first shape's, -180..180) and setting it
+            // turns the selection to exactly that angle (the person's request: before, each typed
+            // digit turned it again and the amount was added to the angle it already had)
+            let cur_angle = app.selection.first().and_then(|id| app.doc.find(*id)).map(|s| {
+                let r = s.rot.rem_euclid(360.0);
+                if r > 180.0 { r - 360.0 } else { r }
+            }).unwrap_or(0.0);
+            let rot_focus: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(egui::Id::new("nb_rot_id")));
+            let editing_rot = rot_focus.is_some_and(|id| ui.ctx().memory(|m| m.has_focus(id)) || ui.ctx().is_being_dragged(id));
+            if app.rot_for != app.selection || !editing_rot {
                 app.rot_for = app.selection.clone();
+                app.rot_input = (cur_angle * 100.0).round() / 100.0;
             }
             // a typed value counts on Enter / leaving the box, a dragged one when the drag ends
             let committed = |r: &egui::Response| r.drag_stopped() || (r.changed() && !r.dragged());
@@ -993,11 +1002,14 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 });
                 nb_grid("rot").show(ui, |ui| {
                     nb_label(ui, tr("Ruota"));
-                    let r = nb_field(ui, 72.0, crate::i18n::dv(&mut app.rot_input).speed(0.5).max_decimals(2).range(-360.0..=360.0).suffix("°"));
-                    // QNumEdit_ValueChanged 0x100c53f38: a non-zero value turns the selection by that
-                    // many degrees around the reference point chosen in the 9-dot grid
-                    if committed(&r) && app.rot_input != 0.0 && has {
-                        let d = app.rot_input;
+                    let r = ui.push_id("nb_rot", |ui| nb_field(ui, 72.0, crate::i18n::dv(&mut app.rot_input).speed(0.5).max_decimals(2).range(-360.0..=360.0).suffix("°"))).inner;
+                    // remember the box's id so the angle isn't refreshed under the person's typing
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("nb_rot_id"), r.id));
+                    // turned around the reference point chosen in the 9-dot grid, to the typed angle:
+                    // a typed value counts on Enter or leaving the box, a dragged one as it moves
+                    let apply = r.lost_focus() || r.dragged() || r.drag_stopped();
+                    let d = app.rot_input - cur_angle;
+                    if apply && d.abs() > 1e-6 && has {
                         app.checkpoint(frame_nr);
                         let sel = app.selection.clone();
                         for s in app.doc.shapes.iter_mut().filter(|s| sel.contains(&s.id)) {
@@ -1069,8 +1081,18 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
 pub fn status_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
     egui::Panel::bottom("status").frame(theme::bar_frame(crate::theme::p().field).inner_margin(egui::Margin::symmetric(10, 3))).show(ui, |ui| {
         ui.horizontal(|ui| {
-            let pos = app.cursor_world.map(|p| format!("x: {:.2}  y: {:.2} mm", p[0], p[1])).unwrap_or_else(|| "x: –  y: – mm".into());
-            ui.label(egui::RichText::new(pos).monospace().color(crate::theme::p().text_dim));
+            // the pointer's coordinates in a box of fixed width (the person's request): numbers are
+            // right-aligned to the same number of characters, so the rest of the bar never moves
+            let pos = app.cursor_world
+                .map(|p| format!("x:{:>9.2}  y:{:>9.2} mm", p[0], p[1]))
+                .unwrap_or_else(|| format!("x:{:>9}  y:{:>9} mm", "–", "–"));
+            let font = egui::FontId::monospace(ui.style().text_styles.get(&egui::TextStyle::Monospace).map(|f| f.size).unwrap_or(13.0));
+            // the widest line the box ever shows: 9 places each side, as in "-12345.67"
+            let w = ui.fonts_mut(|f| f.layout_no_wrap("x:-12345.67  y:-12345.67 mm".into(), font.clone(), Color32::WHITE).size().x);
+            ui.allocate_ui_with_layout(vec2(w, ui.available_height()), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_width(w);
+                ui.label(egui::RichText::new(pos).font(font).color(crate::theme::p().text_dim));
+            });
             ui.separator();
             // the original's Sposta / Dimensione / Ruota switches: what the mouse may do to a selection
             let before = app.edit_switches;
@@ -2028,7 +2050,28 @@ fn laser_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
         }
     });
     if let Some((a, b)) = app.job_progress {
-        ui.add(egui::ProgressBar::new(a as f32 / b as f32).text(trf("Invio {} / {} righe", &[&a, &b])).fill(ACCENT));
+        let done = a as f64 / b.max(1) as f64;
+        ui.add(egui::ProgressBar::new(done as f32).text(trf("Invio {} / {} righe", &[&a, &b])).fill(ACCENT));
+        // elapsed and remaining time of the running job (the person's request)
+        if let Some(t) = &app.job_timer {
+            use crate::app::clock_text;
+            let elapsed = t.elapsed();
+            let left = t.remaining(done);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(trf("Trascorso: {}", &[&clock_text(elapsed)])).monospace());
+                ui.add_space(12.0);
+                let rest = left.map(|s| format!("~{}", clock_text(s))).unwrap_or_else(|| "–".into());
+                ui.label(egui::RichText::new(trf("Rimanente: {}", &[&rest])).monospace().strong());
+                if t.estimate > 0.0 {
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(trf("Stimato: {}", &[&clock_text(t.estimate)])).monospace().color(crate::theme::p().text_dim));
+                }
+                if app.paused {
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(tr("In pausa")).color(Color32::from_rgb(240, 180, 40)));
+                }
+            });
+        }
     }
     ui.add_space(6.0);
     egui::Grid::new("laser_opts").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {

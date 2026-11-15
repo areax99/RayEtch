@@ -288,8 +288,67 @@ fn import_scan_offsets() -> Option<Vec<ScanOffset>> {
     (!rows.is_empty()).then_some(rows)
 }
 
+/// Linux: the system refused the laser's port. One button installs the udev rule through the
+/// system's password window (no terminal, no logging out) and the search starts again at once.
+fn port_access_window(app: &mut RayEtch, ctx: &egui::Context) {
+    // the password request finished
+    if let Some(job) = app.port_access_job.clone() {
+        let done = job.lock().unwrap().take();
+        match done {
+            Some(Ok(())) => {
+                app.port_access_job = None;
+                app.port_denied = None;
+                app.status = tr("Accesso al laser concesso: lo cerco di nuovo…").into();
+                app.console.push(app.status.clone());
+                app.autocon.queue.clear();
+                app.autocon.next_try = std::time::Instant::now();
+            }
+            Some(Err(e)) => {
+                app.port_access_job = None;
+                app.status = trf("Accesso non concesso: {}", &[&e]);
+                app.console.push(app.status.clone());
+            }
+            None => ctx.request_repaint_after(std::time::Duration::from_millis(200)),
+        }
+    }
+    let Some(port) = app.port_denied.clone() else { return };
+    let busy = app.port_access_job.is_some();
+    let mut grant = false;
+    let mut later = false;
+    theme::centered(ctx, "port_access", egui::Window::new(tr("Accesso al laser")).collapsible(false).resizable(false).fixed_size(vec2(460.0, 150.0))).show(ctx, |ui| {
+        ui.label(trf("Linux non permette a RayEtch di usare la porta del laser ({}).", &[&port]));
+        ui.label(tr("Premi il pulsante: il sistema chiede una volta la password di amministratore e da quel momento RayEtch può usare i laser USB, senza comandi e senza uscire dalla sessione."));
+        ui.add_space(8.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = if busy { tr("In attesa della password…") } else { tr("Consenti l'accesso al laser") };
+            if ui.add_enabled(!busy, egui::Button::new(egui::RichText::new(label).strong()).fill(Color32::from_rgb(170, 70, 20)).min_size(vec2(200.0, 28.0))).clicked() {
+                grant = true;
+            }
+            if ui.add_enabled(!busy, egui::Button::new(tr("Più tardi")).min_size(vec2(90.0, 28.0))).clicked() {
+                later = true;
+            }
+        });
+    });
+    if grant {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        app.port_access_job = Some(slot.clone());
+        let ctx = ctx.clone();
+        let p = port.clone();
+        std::thread::spawn(move || {
+            let r = crate::laser::linux_grant_access(&p);
+            *slot.lock().unwrap() = Some(r);
+            ctx.request_repaint();
+        });
+    }
+    if later {
+        app.port_access_later.push(port);
+        app.port_denied = None;
+    }
+}
+
 pub fn window(app: &mut RayEtch, ctx: &egui::Context) {
     checklist_window(app, ctx);
+    port_access_window(app, ctx);
     if !app.show_device {
         return;
     }

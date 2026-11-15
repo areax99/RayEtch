@@ -29,6 +29,8 @@ pub enum Ev {
     Status { state: String, pos: Option<[f64; 2]>, work: Option<[f64; 2]> },
     /// A port that could not be opened for a reason the person can fix (permission, busy)
     PortProblem(String),
+    /// Linux: the system refused the port for lack of permission (the app offers to fix it)
+    PortDenied(String),
 }
 
 pub struct Laser {
@@ -51,8 +53,51 @@ impl Laser {
     }
 }
 
+/// Stop: how long the feed hold has to slow the head before the reset (estimated).
+pub const STOP_HOLD_MS: u64 = 300;
+/// Stop: the longest wait for GRBL to restart after the reset (ESP32 boards take a few seconds).
+pub const RESET_WAIT_MS: u64 = 4000;
+
 pub fn list_ports() -> Vec<String> {
     serialport::available_ports().map(|v| v.into_iter().map(|p| p.port_name).collect()).unwrap_or_default()
+}
+
+/// The udev rule that opens USB serial ports to the person at the computer (Linux).
+pub const LINUX_UDEV_RULE: &str = include_str!("../packaging/linux/70-rayetch-laser.rules");
+/// Where the rule goes.
+pub const LINUX_UDEV_PATH: &str = "/etc/udev/rules.d/70-rayetch-laser.rules";
+
+/// Linux: give this user access to USB serial lasers without the dialout group or logging out.
+/// The system's own password window (pkexec) asks once; then the udev rule is installed, udev
+/// re-reads its rules and re-applies them to the serial ports already plugged in, and `port`
+/// (the one that was refused) is opened up right away too. Blocks until the person answers.
+pub fn linux_grant_access(port: &str) -> Result<(), String> {
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let rule = LINUX_UDEV_RULE.replace('\'', "");
+    let script = format!(
+        "printf '%s' {rule} > {path} && chmod 644 {path} && \
+         (udevadm control --reload-rules || true) && \
+         (udevadm trigger --subsystem-match=tty --action=add || true) && \
+         (udevadm settle --timeout=5 || true) && \
+         ([ ! -e {port} ] || chmod a+rw {port})",
+        rule = q(&rule),
+        path = q(LINUX_UDEV_PATH),
+        port = q(port),
+    );
+    let out = std::process::Command::new("pkexec").args(["sh", "-c", &script]).output().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound { tr("pkexec non è installato: serve per chiedere la password").to_string() } else { e.to_string() }
+    })?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        // 126: the password window was closed; 127: not authorised
+        let code = out.status.code().unwrap_or(-1);
+        if code == 126 || code == 127 {
+            Err(tr("Password non inserita: l'accesso non è stato concesso").into())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
 }
 
 /// The ports the system says are USB devices, whatever their name (a laser board on USB).
@@ -73,6 +118,10 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
     // the work coordinate offset GRBL last reported (WCO), to turn MPos into WPos and back
     let mut wco: [f64; 2] = [0.0, 0.0];
     let mut last_status = Instant::now();
+    // GRBL is locked (alarm): the next job unlocks it first
+    let mut alarm = false;
+    // after a stop's reset, nothing is sent until GRBL greets or this time passes
+    let mut resetting_until: Option<Instant> = None;
     let emit = |ev: Ev, tx: &Sender<Ev>| {
         let _ = tx.send(ev);
         ctx.request_repaint();
@@ -106,7 +155,9 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
                                 if cfg!(windows) {
                                     Some(trf("La porta {} è occupata: chiudi gli altri programmi che usano il laser (LightBurn, LaserGRBL…).", &[&name]))
                                 } else {
-                                    Some(trf("Permesso negato su {}: aggiungi il tuo utente al gruppo dialout (sudo usermod -aG dialout $USER), poi esci e rientra.", &[&name]))
+                                    // Linux and other Unix: the app offers to open the port up
+                                    emit(Ev::PortDenied(name.clone()), &tx);
+                                    continue;
                                 }
                             } else if low.contains("busy") || low.contains("in use") {
                                 Some(trf("La porta {} è occupata: chiudi gli altri programmi che usano il laser (LightBurn, LaserGRBL…).", &[&name]))
@@ -134,6 +185,12 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
                             in_job = true;
                             job_total = lines.len();
                             job_sent = 0;
+                            // a job started while GRBL is locked in an alarm unlocks it first ($X),
+                            // instead of every line being refused with error:9
+                            if alarm {
+                                queue.push_back("$X".into());
+                                alarm = false;
+                            }
                         }
                         queue.extend(lines.into_iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && !l.starts_with(';')));
                         if is_job {
@@ -151,7 +208,16 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
                     in_job = false;
                     waiting_ok = false;
                     if let Some(p) = port.as_mut() {
+                        // GRBL's safe stop: a feed hold first, so the head slows to a halt and
+                        // keeps its position, then the reset. A reset while moving puts GRBL in
+                        // ALARM 3 and it refuses every command until $X or $H (the person had
+                        // to press Home and Origine before Avvia worked again)
+                        let _ = p.write_all(b"!");
+                        std::thread::sleep(Duration::from_millis(STOP_HOLD_MS));
                         let _ = p.write_all(&[crate::gcode::ABORT_BYTE]);
+                        // nothing more is sent until GRBL has restarted and greeted
+                        resetting_until = Some(Instant::now() + Duration::from_millis(RESET_WAIT_MS));
+                        buf.clear();
                     }
                     emit(Ev::JobDone, &tx);
                 }
@@ -193,8 +259,23 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
                         }
                         let pos = mpos.or(wpos.map(|w| [w[0] + wco[0], w[1] + wco[1]]));
                         let work = wpos.or(mpos.map(|m| [m[0] - wco[0], m[1] - wco[1]]));
+                        // the machine says whether it is locked
+                        if state.starts_with("Alarm") {
+                            alarm = true;
+                        } else if state.starts_with("Idle") || state.starts_with("Run") {
+                            alarm = false;
+                        }
                         emit(Ev::Status { state, pos, work }, &tx);
                         continue;
+                    }
+                    // GRBL greeted after a reset: it takes commands again
+                    if line.starts_with("Grbl") || line.starts_with("GrblHAL") {
+                        resetting_until = None;
+                        waiting_ok = false;
+                    }
+                    // locked: an alarm, or the hint GRBL gives at start when it needs unlocking
+                    if line.starts_with("ALARM") || line.contains("'$X' to unlock") || line.contains("$X to unlock") {
+                        alarm = true;
                     }
                     if line == "ok" || line.starts_with("error") {
                         waiting_ok = false;
@@ -218,6 +299,11 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
             }
         }
         // write
+        // after a reset, wait for GRBL to greet (or the time to run out) before sending more
+        if resetting_until.is_some_and(|t| Instant::now() < t) {
+            continue;
+        }
+        resetting_until = None;
         if !waiting_ok {
             if let Some(line) = queue.pop_front() {
                 if p.write_all(format!("{line}\n").as_bytes()).is_ok() {
@@ -260,6 +346,7 @@ mod tests {
                     Ev::Progress(a, b) => println!("HW progress {a}/{b}"),
                     Ev::JobDone => println!("HW job done"),
                     Ev::PortProblem(m) => println!("HW port problem {m}"),
+                    Ev::PortDenied(p) => println!("HW port denied {p}"),
                 }
                 if f(&e) {
                     return true;

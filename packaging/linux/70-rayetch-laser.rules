@@ -1,0 +1,6 @@
+# RayEtch: lets the person at the computer use USB serial lasers (GRBL boards on CH340, CP210x,
+# FTDI and USB CDC) without joining the dialout group or logging out.
+# "uaccess" gives the seated user access as soon as the laser is plugged in; MODE covers systems
+# without it. Installed by RayEtch ("Consenti l'accesso al laser") or scripts/install-linux.sh.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB[0-9]*", TAG+="uaccess", MODE="0666"
+SUBSYSTEM=="tty", KERNEL=="ttyACM[0-9]*", TAG+="uaccess", MODE="0666"
