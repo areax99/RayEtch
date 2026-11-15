@@ -109,6 +109,10 @@ mkdir -p "$PACKAGE_DIR"
 install -m 755 "$BIN" "$PACKAGE_DIR/rayetch"
 install -m 644 assets/icon.png "$PACKAGE_DIR/icon.png"
 install -m 644 assets/document.png "$PACKAGE_DIR/document.png"
+mkdir -p "$PACKAGE_DIR/document-icons"
+for SIZE in 16 32 48 64 128 256; do
+  install -m 644 "packaging/linux/document-icons/$SIZE.png" "$PACKAGE_DIR/document-icons/$SIZE.png"
+done
 install -m 644 packaging/linux/rayetch.desktop "$PACKAGE_DIR/rayetch.desktop"
 install -m 644 packaging/linux/rayetch-mime.xml "$PACKAGE_DIR/rayetch-mime.xml"
 install -m 755 packaging/linux/install-package.sh "$PACKAGE_DIR/install.sh"

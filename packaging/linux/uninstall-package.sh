@@ -22,7 +22,7 @@ rm -f -- "$BIN/rayetch" "$APPS/rayetch.desktop" \
 for SIZE in 48 64 128 256 512; do
   rm -f -- "$ICONS/${SIZE}x${SIZE}/apps/rayetch.png"
 done
-for SIZE in 48 64 128 256; do
+for SIZE in 16 32 48 64 128 256; do
   rm -f -- "$ICONS/${SIZE}x${SIZE}/mimetypes/application-x-rayetch.png"
 done
 
@@ -35,6 +35,9 @@ if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APPS"
 else
   echo "Avviso: update-desktop-database non trovato; la cache del menu potrebbe restare obsoleta." >&2
+fi
+if [ -f "$ICONS/index.theme" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -q "$ICONS"
 fi
 
 echo "RayEtch disinstallato per l'utente corrente."

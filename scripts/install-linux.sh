@@ -30,14 +30,16 @@ install -m 644 assets/icon.png "$PIXMAPS/rayetch.png"
 MIME="$HOME/.local/share/mime"
 mkdir -p "$ICONS/1024x1024/mimetypes" "$MIME/packages"
 cp assets/document.png "$ICONS/1024x1024/mimetypes/application-x-rayetch.png"
-for S in 48 64 128 256; do
+for S in 16 32 48 64 128 256; do
   mkdir -p "$ICONS/${S}x${S}/mimetypes"
-  if command -v convert >/dev/null 2>&1; then
-    convert assets/document.png -resize ${S}x${S} "$ICONS/${S}x${S}/mimetypes/application-x-rayetch.png"
-  fi
+  install -m 644 "packaging/linux/document-icons/$S.png" "$ICONS/${S}x${S}/mimetypes/application-x-rayetch.png"
 done
 install -m 644 packaging/linux/rayetch-mime.xml "$MIME/packages/rayetch.xml"
-command -v update-mime-database >/dev/null 2>&1 && update-mime-database "$MIME" || true
+if command -v update-mime-database >/dev/null 2>&1; then
+  update-mime-database "$MIME"
+else
+  echo "Warning: update-mime-database not found; .rayetch file associations may not be updated." >&2
+fi
 
 # the menu entry
 # Escape both desktop-entry strings and Exec arguments, including literal field-code markers.
@@ -52,7 +54,9 @@ while IFS= read -r LINE; do
 done < packaging/linux/rayetch.desktop > "$APPS/rayetch.desktop"
 chmod 644 "$APPS/rayetch.desktop"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" || true
-command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q "$ICONS" || true
+if [ -f "$ICONS/index.theme" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -q "$ICONS"
+fi
 
 echo "Installed: $BIN/rayetch — RayEtch is in the applications menu."
 echo "If 'rayetch' is not found in a terminal, add ~/.local/bin to your PATH."

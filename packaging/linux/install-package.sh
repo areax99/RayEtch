@@ -14,6 +14,13 @@ for FILE in rayetch icon.png document.png rayetch.desktop rayetch-mime.xml rust-
   fi
 done
 
+for SIZE in 16 32 48 64 128 256; do
+  if [ ! -f "$ROOT/document-icons/$SIZE.png" ]; then
+    echo "Errore: icona documento mancante: $ROOT/document-icons/$SIZE.png" >&2
+    exit 1
+  fi
+done
+
 TARGET=$(cat "$ROOT/rust-target")
 case "$TARGET" in
   x86_64-*-linux-*) ARCH=x86_64 ;;
@@ -65,12 +72,10 @@ for SIZE in 48 64 128 256 512; do
       "$ICONS/${SIZE}x${SIZE}/apps/rayetch.png"
   fi
 done
-for SIZE in 48 64 128 256; do
-  if command -v convert >/dev/null 2>&1; then
-    mkdir -p "$ICONS/${SIZE}x${SIZE}/mimetypes"
-    convert "$ROOT/document.png" -resize "${SIZE}x${SIZE}" \
-      "$ICONS/${SIZE}x${SIZE}/mimetypes/application-x-rayetch.png"
-  fi
+for SIZE in 16 32 48 64 128 256; do
+  mkdir -p "$ICONS/${SIZE}x${SIZE}/mimetypes"
+  install -m 644 "$ROOT/document-icons/$SIZE.png" \
+    "$ICONS/${SIZE}x${SIZE}/mimetypes/application-x-rayetch.png"
 done
 
 install -m 644 "$ROOT/rayetch-mime.xml" "$MIME/packages/rayetch.xml"
@@ -99,6 +104,9 @@ if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APPS"
 else
   echo "Avviso: update-desktop-database non trovato; il menu potrebbe non aggiornarsi subito." >&2
+fi
+if [ -f "$ICONS/index.theme" ] && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -q "$ICONS"
 fi
 
 echo "RayEtch installato per l'utente corrente. Avvialo dal menu applicazioni."
