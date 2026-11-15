@@ -214,13 +214,23 @@ Gli strumenti di compilazione C++ nativi MSVC e il compilatore di risorse devono
 
 #### Linux
 
-Sul computer Linux, dopo aver installato i pacchetti nativi elencati sopra, il modo più semplice è compilare e installare RayEtch per l'utente corrente, aggiungendo anche una voce al menu delle applicazioni:
+Sul computer Linux, dopo aver installato i pacchetti nativi elencati sopra, esegui uno di questi comandi dalla cartella principale del progetto:
+
+Per compilare soltanto l'eseguibile:
+
+```sh
+cargo build --release
+```
+
+Lo troverai in `target/release/rayetch`.
+
+Per un'installazione vera e propria per l'utente corrente (senza `sudo`), che aggiunga RayEtch al menu delle applicazioni:
 
 ```sh
 sh scripts/install-linux.sh
 ```
 
-Lo script esegue `cargo build --release`, poi installa l'eseguibile, l'icona e la voce nel menu delle applicazioni. Se vuoi soltanto compilare l'eseguibile senza installarlo, esegui `cargo build --release`; lo troverai in `target/release/rayetch`. Il computer di destinazione deve avere anche le librerie di sistema necessarie.
+Lo script esegue `cargo build --release` e installa l'eseguibile in `~/.local/bin`, le icone e l'associazione dei file `.rayetch` nella cartella dati dell'utente, e il lanciatore nel menu delle applicazioni. Se `rayetch` non viene trovato dal terminale, aggiungi `~/.local/bin` al `PATH`. Il computer di destinazione deve avere anche le librerie di sistema necessarie.
 
 ### Verificare la compilazione
 
