@@ -266,6 +266,16 @@ sh scripts/install-linux.sh
 
 Lo script esegue `cargo build --release` e installa l'eseguibile in `~/.local/bin`, le icone e l'associazione dei file `.rayetch` nella cartella dati dell'utente, e il lanciatore nel menu delle applicazioni. Se `rayetch` non viene trovato dal terminale, aggiungi `~/.local/bin` al `PATH`. Il computer di destinazione deve avere anche le librerie di sistema necessarie.
 
+Per creare invece un'AppImage da distribuire, compila su Linux con una toolchain Rust GNU nativa x86_64 o aarch64. Installa le dipendenze di sviluppo sopra e scarica la versione di [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy/releases/) adatta alla stessa architettura; rendila eseguibile. Dalla cartella del progetto:
+
+```sh
+LINUXDEPLOY="$HOME/percorso/linuxdeploy-x86_64.AppImage" sh scripts/package-appimage.sh
+```
+
+In alternativa, installa `linuxdeploy` nel `PATH` e ometti `LINUXDEPLOY`. Il risultato è in `release-archives/`; lo script non sovrascrive un file esistente. Compila su una distribuzione non più recente di quelle di destinazione e prova l'AppImage su altri sistemi: alcune librerie e funzionalità desktop dipendono comunque dall'ambiente. Per avviarla, rendila eseguibile con `chmod +x nome.AppImage` e aprila. L'integrazione nel menu e le associazioni dei file non sono installate automaticamente.
+
+L'aggiornamento integrato di RayEtch non supporta l'installazione di AppImage: aggiorna scaricando e sostituendo manualmente il file, senza usare l'installazione automatica nell'app.
+
 ### Verificare la compilazione
 
 Controlla che la compilazione termini senza errori e avvia l'app o l'eseguibile sul sistema operativo previsto. Se possibile, provalo anche su un altro computer. Le build macOS non sono autenticate da Apple: potrebbe essere necessario autorizzare l'apertura dell'app.
