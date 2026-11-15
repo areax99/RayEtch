@@ -30,6 +30,12 @@ Install the stable Rust toolchain with rustup on each build computer. Rustup ins
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+   When the menu appears, press **1**, then **Enter**. When it finishes, run:
+
+   ```sh
+   source "$HOME/.cargo/env"
+   ```
+
 3. Close and reopen Terminal, then check `rustc --version` and `cargo --version`. Xcode Command Line Tools provide the Apple compiler, SDK, `lipo`, `sips`, `iconutil`, and signing utilities used to make the app bundle.
 
 #### Windows
@@ -57,6 +63,12 @@ Install Rust from a terminal:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+When the menu appears, press **1**, then **Enter**. When it finishes, run:
+
+```sh
+source "$HOME/.cargo/env"
 ```
 
 Open a new terminal and check `rustc --version` and `cargo --version`. The listed native packages provide the C toolchain, GTK3, udev/systemd headers, and `pkg-config` required by dependencies.
@@ -152,6 +164,12 @@ Installa la toolchain stabile di Rust con rustup su ogni computer di compilazion
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+   Quando compare il menu, premi **1** e poi **Invio**. Al termine esegui:
+
+   ```sh
+   source "$HOME/.cargo/env"
+   ```
+
 3. Chiudi e riapri il Terminale, poi verifica con `rustc --version` e `cargo --version`. Gli Xcode Command Line Tools forniscono il compilatore Apple, l'SDK, `lipo`, `sips`, `iconutil` e gli strumenti di firma usati per creare il bundle dell'app.
 
 #### Windows
@@ -179,6 +197,12 @@ Installa Rust dal terminale:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Quando compare il menu, premi **1** e poi **Invio**. Al termine esegui:
+
+```sh
+source "$HOME/.cargo/env"
 ```
 
 Apri un nuovo terminale e verifica con `rustc --version` e `cargo --version`. I pacchetti nativi elencati forniscono la toolchain C, GTK3, gli header udev/systemd e `pkg-config` richiesti dalle dipendenze.
@@ -274,6 +298,12 @@ Instala la versión estable de Rust mediante rustup en cada ordenador de compila
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+   Cuando aparezca el menú, pulsa **1** y luego **Intro**. Al terminar, ejecuta:
+
+   ```sh
+   source "$HOME/.cargo/env"
+   ```
+
 3. Cierra y vuelve a abrir Terminal; comprueba `rustc --version` y `cargo --version`. Las herramientas de línea de comandos de Xcode incluyen el compilador de Apple, el SDK, `lipo`, `sips`, `iconutil` y las utilidades de firma necesarias para crear el paquete de la aplicación.
 
 #### Windows
@@ -301,6 +331,12 @@ Instala Rust desde una terminal:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Cuando aparezca el menú, pulsa **1** y luego **Intro**. Al terminar, ejecuta:
+
+```sh
+source "$HOME/.cargo/env"
 ```
 
 Abre una terminal nueva y comprueba `rustc --version` y `cargo --version`. Los paquetes nativos proporcionan las herramientas C, GTK3, los encabezados de udev/systemd y `pkg-config` que necesitan las dependencias.
@@ -396,6 +432,12 @@ Installez la version stable de Rust avec rustup sur chaque ordinateur de compila
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+   Lorsque le menu apparaît, appuyez sur **1**, puis sur **Entrée**. À la fin, exécutez :
+
+   ```sh
+   source "$HOME/.cargo/env"
+   ```
+
 3. Fermez puis rouvrez Terminal, et vérifiez `rustc --version` et `cargo --version`. Les outils de ligne de commande Xcode fournissent le compilateur Apple, le SDK, `lipo`, `sips`, `iconutil` et les utilitaires de signature nécessaires au bundle de l'application.
 
 #### Windows
@@ -423,6 +465,12 @@ Installez Rust depuis un terminal :
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Lorsque le menu apparaît, appuyez sur **1**, puis sur **Entrée**. À la fin, exécutez :
+
+```sh
+source "$HOME/.cargo/env"
 ```
 
 Ouvrez un nouveau terminal et vérifiez `rustc --version` et `cargo --version`. Les paquets natifs fournissent les outils C, GTK3, les en-têtes udev/systemd et `pkg-config` requis par les dépendances.
@@ -518,6 +566,12 @@ Installiere auf jedem Build-Rechner mit rustup die stabile Rust-Toolchain. Rustu
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+   Wenn das Menü erscheint, drücke **1** und dann **Eingabetaste**. Führe anschließend aus:
+
+   ```sh
+   source "$HOME/.cargo/env"
+   ```
+
 3. Schließe das Terminal und öffne es erneut. Prüfe `rustc --version` und `cargo --version`. Die Xcode Command Line Tools enthalten Apples Compiler, SDK, `lipo`, `sips`, `iconutil` und die Signaturwerkzeuge für das App-Bundle.
 
 #### Windows
@@ -545,6 +599,12 @@ Installiere Rust im Terminal:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Wenn das Menü erscheint, drücke **1** und dann **Eingabetaste**. Führe anschließend aus:
+
+```sh
+source "$HOME/.cargo/env"
 ```
 
 Öffne ein neues Terminal und prüfe `rustc --version` und `cargo --version`. Die nativen Pakete enthalten die C-Werkzeuge, GTK3, udev/systemd-Header und `pkg-config`, die von Abhängigkeiten benötigt werden.
