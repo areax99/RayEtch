@@ -11,4 +11,4 @@
 /app/
 /scripts/package-local.sh
 /GUIDA-RELEASE.md
-scripts/package-appimage.sh
+/scripts/package-appimage.sh
