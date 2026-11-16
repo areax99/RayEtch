@@ -3328,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "rayetch"
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 dependencies = [
  "eframe",
  "epaint_default_fonts",
