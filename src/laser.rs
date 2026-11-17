@@ -58,8 +58,46 @@ pub const STOP_HOLD_MS: u64 = 300;
 /// Stop: the longest wait for GRBL to restart after the reset (ESP32 boards take a few seconds).
 pub const RESET_WAIT_MS: u64 = 4000;
 
+/// How often the background list of serial ports is refreshed.
+pub const PORT_SCAN_EVERY: Duration = Duration::from_secs(2);
+
+/// The serial ports, and which of them are USB, as last read by the background scanner.
+#[derive(Default, Clone)]
+struct PortList {
+    all: Vec<String>,
+    usb: Vec<String>,
+    /// at least one scan has finished
+    ready: bool,
+}
+
+/// The serial ports are listed on a thread of their own, every PORT_SCAN_EVERY, and the window
+/// only reads the last list. On Windows asking the system for its ports (SetupAPI, Bluetooth
+/// included) can take hundreds of milliseconds, and the window used to ask twice every 3 s
+/// while looking for the laser: the person's PC froze on Windows and ran smoothly on Linux.
+fn port_list() -> &'static std::sync::Mutex<PortList> {
+    static LIST: std::sync::OnceLock<std::sync::Mutex<PortList>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        std::thread::spawn(|| loop {
+            let ports = serialport::available_ports().unwrap_or_default();
+            let all = ports.iter().map(|p| p.port_name.clone()).collect();
+            let usb = ports.iter().filter(|p| matches!(p.port_type, serialport::SerialPortType::UsbPort(_))).map(|p| p.port_name.clone()).collect();
+            if let Ok(mut l) = port_list().lock() {
+                *l = PortList { all, usb, ready: true };
+            }
+            std::thread::sleep(PORT_SCAN_EVERY);
+        });
+        std::sync::Mutex::new(PortList::default())
+    })
+}
+
+/// The serial ports (from the background scan; empty until the first scan is done).
 pub fn list_ports() -> Vec<String> {
-    serialport::available_ports().map(|v| v.into_iter().map(|p| p.port_name).collect()).unwrap_or_default()
+    port_list().lock().map(|l| l.all.clone()).unwrap_or_default()
+}
+
+/// Whether the first background scan of the ports has finished.
+pub fn ports_ready() -> bool {
+    port_list().lock().map(|l| l.ready).unwrap_or(false)
 }
 
 /// The udev rule that opens USB serial ports to the person at the computer (Linux).
@@ -102,9 +140,7 @@ pub fn linux_grant_access(port: &str) -> Result<(), String> {
 
 /// The ports the system says are USB devices, whatever their name (a laser board on USB).
 pub fn usb_ports() -> Vec<String> {
-    serialport::available_ports()
-        .map(|v| v.into_iter().filter(|p| matches!(p.port_type, serialport::SerialPortType::UsbPort(_))).map(|p| p.port_name).collect())
-        .unwrap_or_default()
+    port_list().lock().map(|l| l.usb.clone()).unwrap_or_default()
 }
 
 fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
@@ -120,6 +156,8 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
     let mut last_status = Instant::now();
     // GRBL is locked (alarm): the next job unlocks it first
     let mut alarm = false;
+    // the last status passed on to the window, so an unchanged one isn't sent again
+    let mut last_report: Option<(String, Option<[f64; 2]>, Option<[f64; 2]>)> = None;
     // after a stop's reset, nothing is sent until GRBL greets or this time passes
     let mut resetting_until: Option<Instant> = None;
     let emit = |ev: Ev, tx: &Sender<Ev>| {
@@ -132,6 +170,8 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
         match rx.recv_timeout(timeout) {
             Ok(cmd) => match cmd {
                 Cmd::Connect(name, baud) => {
+                    // a new port: its first status always reaches the window (it confirms the laser)
+                    last_report = None;
                     port = None;
                     // DTR and RTS on, as macOS and Linux do when a port opens: on Windows the
                     // serial library leaves both off, and many laser boards (CH340 Arduinos, USB
@@ -265,7 +305,13 @@ fn worker(rx: Receiver<Cmd>, tx: Sender<Ev>, ctx: eframe::egui::Context) {
                         } else if state.starts_with("Idle") || state.starts_with("Run") {
                             alarm = false;
                         }
-                        emit(Ev::Status { state, pos, work }, &tx);
+                        // only a change is passed on: an idle laser answering "?" every 300 ms made
+                        // the window redraw several times a second for nothing (slow on old PCs)
+                        let now = (state.clone(), pos, work);
+                        if last_report.as_ref() != Some(&now) {
+                            last_report = Some(now);
+                            emit(Ev::Status { state, pos, work }, &tx);
+                        }
                         continue;
                     }
                     // GRBL greeted after a reset: it takes commands again

@@ -65,15 +65,53 @@ fn main() -> eframe::Result<()> {
     let viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
     #[cfg(not(target_os = "macos"))]
     let viewport = viewport.with_decorations(false);
-    let options = eframe::NativeOptions {
-        viewport,
-        renderer: renderer(),
-        ..Default::default()
+    let first = renderer();
+    let run = |renderer: eframe::Renderer, screenshot: Option<std::path::PathBuf>, open_file: Option<std::path::PathBuf>| {
+        let options = eframe::NativeOptions { viewport: viewport.clone(), renderer, wgpu_options: wgpu_options(), ..Default::default() };
+        eframe::run_native("RayEtch", options, Box::new(move |cc| Ok(Box::new(make_app(cc, screenshot, open_file)))))
     };
-    eframe::run_native(
-        "RayEtch",
-        options,
-        Box::new(move |cc| {
+    match run(first, screenshot.clone(), open_file.clone()) {
+        // no graphics card wgpu can use (an old PC without DirectX 12 / Vulkan, or only Windows'
+        // software drawing): OpenGL instead, which such PCs have
+        Err(e) if first == eframe::Renderer::Wgpu => {
+            eprintln!("wgpu non disponibile ({e}): uso OpenGL");
+            run(eframe::Renderer::Glow, screenshot, open_file)
+        }
+        r => r,
+    }
+}
+
+/// wgpu takes a real graphics card only: Windows' software DirectX ("Microsoft Basic Render
+/// Driver", WARP) and other drawing on the processor are refused, so an old PC falls back to
+/// OpenGL instead of crawling (the person's 2011 PC). A discrete card comes first.
+fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuSetup, wgpu};
+    let mut cfg = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let WgpuSetup::CreateNew(ref mut new) = cfg.wgpu_setup {
+        new.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
+            let rank = |t: wgpu::DeviceType| match t {
+                wgpu::DeviceType::DiscreteGpu => 0,
+                wgpu::DeviceType::IntegratedGpu => 1,
+                wgpu::DeviceType::VirtualGpu => 2,
+                wgpu::DeviceType::Other => 3,
+                wgpu::DeviceType::Cpu => 9,
+            };
+            adapters
+                .iter()
+                .filter(|a| a.get_info().device_type != wgpu::DeviceType::Cpu)
+                .filter(|a| !a.get_info().name.to_lowercase().contains("basic render"))
+                .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
+                .min_by_key(|a| rank(a.get_info().device_type))
+                .cloned()
+                .ok_or_else(|| "nessuna scheda video adatta (solo disegno software)".to_string())
+        }));
+    }
+    cfg
+}
+
+fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::PathBuf>, open_file: Option<std::path::PathBuf>) -> app::RayEtch {
+    {
+        {
             let mut a = app::RayEtch::new(cc, screenshot);
             if let Some(p) = open_file {
                 if fileicon::is_project(&p) {
@@ -129,9 +167,9 @@ fn main() -> eframe::Result<()> {
                 a.measure.shape = a.doc.shapes.first().map(|s| s.id);
                 a.measure.prim = Some(1);
             }
-            Ok(Box::new(a))
-        }),
-    )
+            a
+        }
+    }
 }
 
 /// The window and Dock/taskbar icon, built into the program (assets/icon.png, made by

@@ -1246,13 +1246,25 @@ impl RayEtch {
             ctx.request_repaint_after(ac.next_try - now);
             return;
         }
+        // the background list of ports isn't ready yet (just started): look again shortly
+        if ac.queue.is_empty() && !crate::laser::ports_ready() {
+            ac.next_try = now + AUTOCONNECT_NEXT;
+            ctx.request_repaint_after(AUTOCONNECT_NEXT);
+            return;
+        }
         if ac.queue.is_empty() {
             self.ports = crate::laser::list_ports();
             ac.queue = auto_port_order(&self.port_sel, &self.ports);
             // every port the system knows is USB is tried too, whatever its name (Linux and
             // Windows name them differently from macOS)
             if self.port_sel.is_empty() {
-                for p in crate::laser::usb_ports() {
+                let usb = crate::laser::usb_ports();
+                // Windows names every port COMn, so all were tried, Bluetooth ones too, whose
+                // opening can hang for seconds: with USB ports present, only those are tried
+                if cfg!(windows) && !usb.is_empty() {
+                    ac.queue.retain(|p| usb.contains(p));
+                }
+                for p in usb {
                     if !ac.queue.contains(&p) && !auto_port_excluded(&p) {
                         ac.queue.push(p);
                     }
@@ -2177,8 +2189,9 @@ impl eframe::App for RayEtch {
         }
         self.window_focused = ctx.input(|i| i.viewport().focused.unwrap_or(true) && !i.viewport().minimized.unwrap_or(false));
         self.handle_screenshot(&ctx);
+        // the laser's events wake the window themselves; this only keeps an eye on it
         if self.connected.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            ctx.request_repaint_after(std::time::Duration::from_millis(1000));
         }
     }
 }
