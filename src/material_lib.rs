@@ -273,6 +273,8 @@ pub fn library_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
     let mut action: Option<&'static str> = None;
     let mut double_clicked: Option<usize> = None;
     let has_lib = app.material_lib.current.is_some();
+    // a layer picked in Tagli / Livelli: a row of the list (layers that hold shapes)
+    let layer_picked = app.selected_row.is_some_and(|r| app.doc.used_layers().contains(&r));
     let sel = app.material_lib.selected.filter(|&i| app.material_lib.lib().is_some_and(|l| i < l.entries.len()));
     app.material_lib.selected = sel;
     ui.columns(2, |c| {
@@ -332,7 +334,7 @@ pub fn library_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
                     st.form = None;
                 }
             } else {
-                ui.label(egui::RichText::new(tr("Nessuna libreria: seleziona un livello e premi «Crea nuovo da livello» (la libreria si crea da sola), oppure usa «Gestisci libreria».")).color(crate::theme::p().text_dim));
+                ui.label(egui::RichText::new(tr("Nessuna libreria: seleziona un livello nella finestra Tagli / Livelli e premi «Crea nuovo da livello» (la libreria si crea da sola), oppure usa «Gestisci libreria».")).color(crate::theme::p().text_dim));
             }
         });
         // ---- Gestisci libreria
@@ -415,8 +417,13 @@ pub fn library_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
                     action = Some("link");
                 }
                 ui.add_space(30.0);
-                // always on: without a library open, the first entry makes one (see "create")
-                if b(ui, true, tr("Crea nuovo da livello"), tr("Crea una voce della libreria dalle impostazioni del livello selezionato")) {
+                // on only with a layer picked in Tagli / Livelli (the person's rule); without a
+                // library open, the first entry makes one (see "create")
+                if b(ui, layer_picked, tr("Crea nuovo da livello"), if layer_picked {
+                    tr("Crea una voce della libreria dalle impostazioni del livello selezionato")
+                } else {
+                    tr("Seleziona prima un livello nella finestra Tagli / Livelli")
+                }) {
                     action = Some("create");
                 }
                 if b(ui, picked, tr("Modifica taglio"), tr("Modifica le impostazioni di taglio di questa voce")) {
