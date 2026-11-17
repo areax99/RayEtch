@@ -174,15 +174,13 @@ fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::Path
 
 /// The window and Dock/taskbar icon, built into the program (assets/icon.png, made by
 /// `cargo run --example make_icon`).
-/// How the window is drawn. On Windows with wgpu (DirectX 12 or Vulkan): many Windows PCs
-/// (integrated graphics, old drivers, virtual machines, Remote Desktop) only have a slow software
-/// OpenGL, which made the program crawl there. macOS and Linux keep OpenGL, which works well
-/// on them. RAYETCH_RENDERER=glow or =wgpu overrides it, should a computer draw badly.
+/// How the window is drawn: OpenGL (glow) everywhere. wgpu was tried on Windows, but on the
+/// person's 2011 PC (Intel graphics without DirectX 12 / Vulkan) it opened a black window that
+/// froze, while OpenGL runs smoothly on the same PC under Linux Mint. RAYETCH_RENDERER=wgpu
+/// still picks wgpu, for a computer where OpenGL draws badly.
 fn renderer() -> eframe::Renderer {
     match std::env::var("RAYETCH_RENDERER").map(|v| v.to_ascii_lowercase()) {
-        Ok(v) if v == "glow" || v == "opengl" => eframe::Renderer::Glow,
         Ok(v) if v == "wgpu" => eframe::Renderer::Wgpu,
-        _ if cfg!(windows) => eframe::Renderer::Wgpu,
         _ => eframe::Renderer::Glow,
     }
 }
