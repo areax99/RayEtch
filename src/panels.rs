@@ -21,6 +21,11 @@ pub fn speed_label() -> &'static str {
     if speed_mm_s() { tr("Velocità (mm/s)") } else { tr("Velocità (mm/min)") }
 }
 
+/// A speed with its unit, in the laser's control units ("600 mm/min" or "10 mm/s").
+pub fn speed_text(v: f64) -> String {
+    if speed_mm_s() { format!("{:.0} mm/s", v / 60.0) } else { format!("{:.0} mm/min", v) }
+}
+
 /// A speed shown in the laser's control units; `v` stays in mm/min.
 pub fn speed_value(v: f64) -> f64 {
     if speed_mm_s() { v / 60.0 } else { v }
@@ -1741,6 +1746,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         theme::dock_header(ui, match app.right_tab {
             RightTab::Laser => tr("Laser"),
+            RightTab::Library => tr("Libreria dei materiali"),
             RightTab::Move => tr("Sposta"),
             RightTab::Console => tr("Console"),
             RightTab::Shape => tr("Proprietà forma"),
@@ -1752,7 +1758,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
                 if beginner && app.right_tab == RightTab::Console {
                     app.right_tab = RightTab::Laser;
                 }
-                for (t, l) in [(RightTab::Laser, tr("Laser")), (RightTab::Move, tr("Sposta")), (RightTab::Console, tr("Console")), (RightTab::Shape, tr("Forma"))] {
+                for (t, l) in [(RightTab::Laser, tr("Laser")), (RightTab::Library, tr("Libreria dei materiali")), (RightTab::Move, tr("Sposta")), (RightTab::Console, tr("Console")), (RightTab::Shape, tr("Forma"))] {
                     if beginner && t == RightTab::Console {
                         continue;
                     }
@@ -1762,6 +1768,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
             ui.separator();
             egui::ScrollArea::vertical().id_salt("dock_scroll").show(ui, |ui| match app.right_tab {
                 RightTab::Laser => laser_tab(app, ui),
+                RightTab::Library => crate::material_lib::library_tab(app, ui),
                 RightTab::Move => move_tab(app, ui),
                 RightTab::Console => console_tab(app, ui),
                 RightTab::Shape => shape_tab(app, ui),
@@ -2894,8 +2901,38 @@ fn dither_example_rgba(cs: &CutSetting, w: usize, h: usize) -> Vec<u8> {
     rgba
 }
 
-pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
-    offset_window(app, ctx);
+/// The material test's "Modifica impostazione materiale / testo / bordo": the same cut-settings
+/// editor as a layer (the person's pictures 14-16), working on the test's own setting. The
+/// editor runs on a stand-in document holding the three settings on layers 00-02, so the
+/// project, its undo history and its saved state are left as they were.
+fn test_setting_editor(app: &mut RayEtch, ctx: &egui::Context) {
+    let Some(t) = app.material_test.clone() else { return };
+    let mut stand_in = Document::default();
+    stand_in.device = app.doc.device.clone();
+    stand_in.layers[0] = t.material.clone();
+    stand_in.layers[1] = t.text.clone();
+    stand_in.layers[2] = t.border.clone();
+    std::mem::swap(&mut app.doc, &mut stand_in);
+    let undo = std::mem::take(&mut app.undo);
+    let redo = std::mem::take(&mut app.redo);
+    let dirty = app.dirty;
+    layer_editor(app, ctx);
+    if let Some(mt) = app.material_test.as_mut() {
+        mt.material = app.doc.layers[0].clone();
+        mt.text = app.doc.layers[1].clone();
+        mt.border = app.doc.layers[2].clone();
+    }
+    std::mem::swap(&mut app.doc, &mut stand_in);
+    app.undo = undo;
+    app.redo = redo;
+    app.dirty = dirty;
+    if app.editor_layer.is_none() {
+        app.test_edit = None;
+    }
+}
+
+/// "Editor impostazioni di taglio" for the layer in `app.editor_layer`.
+pub(crate) fn layer_editor(app: &mut RayEtch, ctx: &egui::Context) {
     if let Some(l) = app.editor_layer {
         app.doc.lock_cut_mode(l);
         let art = app.doc.layer_art(l);
@@ -2918,7 +2955,9 @@ pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
         } else {
             ("cut_editor", trf("Editor impostazioni di taglio — {}", &[&layer_name(l)]))
         };
-        theme::centered(ctx, key, egui::Window::new(title).open(&mut open).resizable(false).collapsible(false).min_width(440.0)).show(ctx, |ui| {
+        theme::centered(ctx, key, egui::Window::new(title).open(&mut open).resizable(false).collapsible(false).min_width(440.0)
+            // over the material test's window when it edits one of the test's settings
+            .order(if app.test_edit.is_some() { egui::Order::Foreground } else { egui::Order::Middle })).show(ctx, |ui| {
             if image {
                 changed |= image_settings(ui, &mut cs, l, art, &mut action);
             } else {
@@ -3200,9 +3239,20 @@ pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
             }
             Some("reset") => {
                 let name = cs.name.clone();
-                cs = app.cut_defaults.get(&l).cloned().unwrap_or_default();
+                cs = match app.test_edit {
+                    // a material-test setting goes back to the test's own default
+                    Some(k) => {
+                        let d = crate::lasertest::MaterialTest::new(&app.doc.device);
+                        [d.material, d.text, d.border][k.min(2)].clone()
+                    }
+                    None => app.cut_defaults.get(&l).cloned().unwrap_or_default(),
+                };
                 cs.name = name;
                 changed = true;
+            }
+            // a material-test setting is not a project layer: it isn't made a default
+            Some("default") | Some("default_all") if app.test_edit.is_some() || app.lib_edit.is_some() => {
+                app.status = tr("Le impostazioni del test materiale si salvano con l'icona Salva della finestra del test").to_string();
             }
             Some("default") => {
                 app.cut_defaults.insert(l, cs.clone());
@@ -3241,6 +3291,19 @@ pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
             app.editor_layer = None;
             app.editor_orig = None;
         }
+    }
+
+}
+
+pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
+    offset_window(app, ctx);
+    if app.lib_edit.is_some() {
+        crate::material_lib::entry_editor(app, ctx);
+    } else if app.test_edit.is_some() && app.material_test.is_some() {
+        test_setting_editor(app, ctx);
+    } else {
+        app.test_edit = None;
+        layer_editor(app, ctx);
     }
 
     // Impostazioni della periferica: the original's four tabs (device_ui.rs)

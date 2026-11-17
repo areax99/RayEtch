@@ -79,8 +79,10 @@ impl IntervalTest {
             } else {
                 doc.add_shape(Shape::new(0, Geometry::Rect { w: s, h: s, radius: 0.0 }, layer, x, y));
             }
-            // "%1.2f" in mm (0x100d389ac); engraved with the square's own setting
-            let text = format!("{:.2}", interval);
+            // the original writes "%1.2f" (0x100d389ac), but with the default 0.07-0.15 mm over 10
+            // steps two squares then read "0.11": three decimals keep every label different, in
+            // the system's decimal style (0,079); engraved with the square's own setting
+            let text = MtParam::Interval.fmt(interval);
             add_label(&mut doc, &text, s * IT_LABEL_SCALE * 0.5, layer, [x - s * 0.5 - s * 0.35, y], 90.0);
         }
         doc
@@ -88,6 +90,24 @@ impl IntervalTest {
 }
 
 // ---------------------------------------------------------------- material test
+
+/// The parameters a GRBL laser offers in the test, in the menu's order (Frequency and Q-pulse
+/// are removed for it by MaterialTest::showEvent 0x100d3fc18).
+pub const MT_PARAMS: [MtParam; 4] = [MtParam::Speed, MtParam::Power, MtParam::Interval, MtParam::Passes];
+
+/// Rows and columns never vary the same thing (on_cbYParam_currentIndexChanged 0x100d40690 and
+/// on_cbXParam_currentIndexChanged 0x100d407c4): when `changed` now holds the other axis's
+/// parameter, the other axis moves to the next one in the menu, or the previous one when it was
+/// the last, and its Min / Max go back to that parameter's defaults.
+pub fn keep_axes_apart(changed: &Axis, other: &mut Axis) {
+    if changed.param != other.param {
+        return;
+    }
+    let i = MT_PARAMS.iter().position(|p| *p == changed.param).unwrap_or(0);
+    let j = if i + 1 == MT_PARAMS.len() { i - 1 } else { i + 1 };
+    other.param = MT_PARAMS[j];
+    (other.min, other.max) = other.param.default_range();
+}
 
 /// What a row or column varies (MaterialTest::SetCutParam 0x100d42988).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -117,6 +137,19 @@ impl MtParam {
             MtParam::Interval => "mm",
             MtParam::Passes => "",
             MtParam::Frequency => "kHz",
+        }
+    }
+
+    /// Min / Max a parameter starts from when it is picked, from the original's GRBL table
+    /// MT_PARAM_DEF at 0x10245ed40 (UpdateControls 0x100d42b9c): speed 10-300 mm/s
+    /// (600-18000 mm/min), power 10-100 %, interval 0.050-0.150 mm, passes 1-10, 1-20 kHz.
+    pub fn default_range(self) -> (f64, f64) {
+        match self {
+            MtParam::Speed => (600.0, 18000.0),
+            MtParam::Power => (10.0, 100.0),
+            MtParam::Interval => (0.05, 0.15),
+            MtParam::Passes => (1.0, 10.0),
+            MtParam::Frequency => (1.0, 20.0),
         }
     }
 
@@ -221,21 +254,32 @@ pub struct MaterialTest {
 
 impl MaterialTest {
     pub fn new(device: &Device) -> Self {
+        // the three settings as the person's pictures 14-16 of the original show them:
+        // 00 material Fill 6000 mm/min 20 %, 01 text Line 1800 mm/min 30 %, 02 border Line
+        // 600 mm/min 80 % with Risultato (output) off; air assist on in all three
         let mut material = CutSetting::default();
-        material.name = "Materiale".into();
+        material.name = "C00".into();
         material.mode = CutMode::Fill;
+        material.speed = 6000.0;
+        material.max_power = 20.0;
+        material.min_power = 20.0;
+        material.interval = 0.1;
+        material.air = true;
         let mut text = CutSetting::default();
-        text.name = "Testo".into();
-        text.mode = CutMode::Fill;
-        text.speed = 6000.0;
-        text.max_power = 20.0;
+        text.name = "C01".into();
+        text.mode = CutMode::Line;
+        text.speed = 1800.0;
+        text.max_power = 30.0;
         text.min_power = 20.0;
+        text.air = true;
         let mut border = CutSetting::default();
-        border.name = "Bordo".into();
+        border.name = "C02".into();
         border.mode = CutMode::Line;
-        border.speed = 1200.0;
-        border.max_power = 30.0;
-        border.min_power = 30.0;
+        border.speed = 600.0;
+        border.max_power = 80.0;
+        border.min_power = 20.0;
+        border.air = true;
+        border.output = false;
         // the person's picture: rows vary speed up to 18000 mm/min, 10 columns of power 10–100 %;
         // centre = half the bed (showEvent 0x100d3fc18)
         Self {
@@ -246,7 +290,8 @@ impl MaterialTest {
             text,
             border,
             enable_text: true,
-            enable_border: true,
+            // off, as on the original (picture 13)
+            enable_border: false,
         }
     }
 
@@ -254,14 +299,15 @@ impl MaterialTest {
     /// resource of the original that wasn't read: these values are estimates.
     pub fn preset(&mut self, which: usize) {
         let (rows, cols, mode) = match which {
-            // CO2 - Cut test
-            0 => ((MtParam::Speed, 300.0, 1800.0), (MtParam::Power, 30.0, 90.0), CutMode::Line),
-            // CO2 - Engrave test
-            1 => ((MtParam::Speed, 6000.0, 30000.0), (MtParam::Power, 10.0, 60.0), CutMode::Fill),
-            // Diode - Cut test
-            2 => ((MtParam::Speed, 60.0, 600.0), (MtParam::Power, 50.0, 100.0), CutMode::Line),
-            // Diode - Engrave test
-            _ => ((MtParam::Speed, MT_DEFAULT_SPEED_MIN, MT_DEFAULT_SPEED_MAX), (MtParam::Power, 10.0, 100.0), CutMode::Fill),
+            // speeds (mm/min) as the person set them; powers estimated
+            // CO2 - Cut test: 300-3000 mm/min
+            0 => ((MtParam::Speed, 300.0, 3000.0), (MtParam::Power, 30.0, 90.0), CutMode::Line),
+            // CO2 - Engrave test: 3000-30000 mm/min
+            1 => ((MtParam::Speed, 3000.0, 30000.0), (MtParam::Power, 10.0, 60.0), CutMode::Fill),
+            // Diode - Cut test: 120-1200 mm/min
+            2 => ((MtParam::Speed, 120.0, 1200.0), (MtParam::Power, 50.0, 100.0), CutMode::Line),
+            // Diode - Engrave test: 1200-12000 mm/min
+            _ => ((MtParam::Speed, 1200.0, 12000.0), (MtParam::Power, 10.0, 100.0), CutMode::Fill),
         };
         self.rows.param = rows.0;
         self.rows.min = rows.1;
@@ -472,5 +518,127 @@ mod tests {
             assert_eq!(MtParam::Speed.fmt(18000.0), "18,000");
             assert_eq!(MtParam::Power.fmt(10.0), "10.0");
         }
+    }
+
+    /// "Diode - Cut test": every cell and the text are cut as lines, nothing is filled.
+    #[test]
+    fn diode_cut_test_has_no_fill() {
+        let base = Document::default();
+        let mut t = MaterialTest::new(&base.device);
+        t.preset(2);
+        let d = t.build(&base);
+        for s in &d.shapes {
+            let mode = d.layer_art(s.layer).clamp(d.layers[s.layer].mode);
+            assert_eq!(mode, CutMode::Line, "layer {} is {:?}", s.layer, mode);
+        }
+        // the border is off by default, as on the original
+        assert!(!t.enable_border);
+    }
+
+    /// All four built-in presets: each cell has the right mode, its own speed and power reach
+    /// the job and the G-code, the labels stay lines, and the job time is sensible.
+    #[test]
+    fn all_presets_build_a_working_job() {
+        use crate::gcode::{JobOptions, MoveKind, StartFrom, plan, write_gcode};
+        let base = Document::default();
+        // (preset, cell mode, speed range, power range)
+        let cases = [
+            (0, CutMode::Line, (300.0, 3000.0), (30.0, 90.0)),
+            (1, CutMode::Fill, (3000.0, 30000.0), (10.0, 60.0)),
+            (2, CutMode::Line, (120.0, 1200.0), (50.0, 100.0)),
+            (3, CutMode::Fill, (1200.0, 12000.0), (10.0, 100.0)),
+        ];
+        let opts = JobOptions { start_from: StartFrom::AbsoluteCoords, job_origin: 6, selected_only: false, optimize: true, selection_origin: false };
+        for (n, mode, speeds, powers) in cases {
+            let mut t = MaterialTest::new(&base.device);
+            t.preset(n);
+            let d = t.build(&base);
+            let cells: Vec<usize> = (LAYER_COUNT..d.layers.len()).collect();
+            assert_eq!(cells.len(), 100, "preset {n}");
+            for &l in &cells {
+                assert_eq!(d.layer_art(l).clamp(d.layers[l].mode), mode, "preset {n} layer {l}");
+                let cs = &d.layers[l];
+                assert!(cs.speed >= speeds.0 - 1e-6 && cs.speed <= speeds.1 + 1e-6, "preset {n} speed {}", cs.speed);
+                assert!(cs.max_power >= powers.0 - 1e-6 && cs.max_power <= powers.1 + 1e-6, "preset {n} power {}", cs.max_power);
+            }
+            // the labels (layer 01) are lines
+            assert_eq!(d.layers[1].mode, CutMode::Line, "preset {n} text");
+            let job = plan(&d, &[], &opts);
+            // every cell burns, at its own speed and power
+            for &l in &cells {
+                let cs = &d.layers[l];
+                assert!(
+                    job.moves.iter().any(|m| m.layer == l && m.kind == MoveKind::Cut && (m.speed - cs.speed).abs() < 1e-6 && (m.power - cs.max_power).abs() < 1e-6),
+                    "preset {n}: cell layer {l} does not burn"
+                );
+            }
+            let g = write_gcode(&d, &job, &opts);
+            let f = |v: f64| format!("F{}", v.round() as i64);
+            assert!(g.contains(&f(speeds.0)) && g.contains(&f(speeds.1)), "preset {n}: end speeds missing from the G-code");
+            let secs = job.estimate_seconds(400.0, 3000.0);
+            assert!(secs > 10.0 && secs < 3.0 * 3600.0, "preset {n}: {secs} s");
+        }
+    }
+
+    /// Interval test: 10 squares, each burned at its own interval (rows that far apart), at the
+    /// test's speed and power, with labels all different; the dithered version is images.
+    #[test]
+    fn interval_test_burns_each_interval() {
+        use crate::gcode::{JobOptions, MoveKind, StartFrom, plan};
+        let base = Document::default();
+        let opts = JobOptions { start_from: StartFrom::AbsoluteCoords, job_origin: 6, selected_only: false, optimize: true, selection_origin: false };
+        for dithered in [false, true] {
+            let t = IntervalTest { dithered, ..IntervalTest::default() };
+            let d = t.build(&base);
+            let cells: Vec<usize> = (LAYER_COUNT..d.layers.len()).collect();
+            assert_eq!(cells.len(), 10);
+            let job = plan(&d, &[], &opts);
+            let mut labels = Vec::new();
+            for (i, &l) in cells.iter().enumerate() {
+                let want = t.interval_at(i as u32);
+                assert!((d.layers[l].interval - want).abs() < 1e-9);
+                let expect = if dithered { CutMode::Image } else { CutMode::Fill };
+                assert_eq!(d.layer_art(l).clamp(d.layers[l].mode), expect);
+                // the scan lines of this square are `want` apart
+                // only the square's own lines (its label is engraved on the same layer, beside it)
+                let sq = d.shapes.iter().find(|s| s.layer == l && matches!(s.geom, Geometry::Rect { .. } | Geometry::Image { .. })).unwrap().bbox();
+                let inside = |m: &crate::gcode::Move| m.to[0] >= sq.min[0] - 1e-6 && m.to[0] <= sq.max[0] + 1e-6 && m.to[1] >= sq.min[1] - 1e-6 && m.to[1] <= sq.max[1] + 1e-6;
+                let mut ys: Vec<f64> = job.moves.iter().filter(|m| m.layer == l && m.kind == MoveKind::Cut && inside(m)).map(|m| (m.to[1] * 1e4).round() / 1e4).collect();
+                ys.sort_by(|a, b| a.total_cmp(b));
+                ys.dedup();
+                assert!(ys.len() > 10, "square {i} has {} lines", ys.len());
+                let gaps: Vec<f64> = ys.windows(2).map(|w| w[1] - w[0]).filter(|g| *g < want * 1.5).collect();
+                let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
+                assert!((mean - want).abs() < want * 0.1, "square {i}: lines {mean} apart, want {want}");
+                assert!(job.moves.iter().any(|m| m.layer == l && m.kind == MoveKind::Cut && (m.speed - t.speed).abs() < 1e-6));
+                labels.push(MtParam::Interval.fmt(want));
+            }
+            let mut uniq = labels.clone();
+            uniq.dedup();
+            assert_eq!(uniq.len(), 10, "labels {labels:?}");
+        }
+    }
+
+    /// Rows and columns never vary the same parameter, as in the original.
+    #[test]
+    fn axes_stay_apart() {
+        let base = Document::default();
+        let mut t = MaterialTest::new(&base.device);
+        // rows: speed, columns: power. Rows switch to power: columns move on to interval
+        t.rows.param = MtParam::Power;
+        t.rows.min = 10.0;
+        keep_axes_apart(&t.rows, &mut t.cols);
+        assert_eq!(t.cols.param, MtParam::Interval);
+        assert_eq!((t.cols.min, t.cols.max), (0.05, 0.15));
+        // the last parameter steps back instead
+        t.cols.param = MtParam::Passes;
+        t.rows.param = MtParam::Passes;
+        keep_axes_apart(&t.rows, &mut t.cols);
+        assert_eq!(t.cols.param, MtParam::Interval);
+        // different parameters: nothing moves
+        t.rows.param = MtParam::Speed;
+        keep_axes_apart(&t.rows, &mut t.cols);
+        assert_eq!(t.cols.param, MtParam::Interval);
+        assert_eq!(MtParam::Speed.default_range(), (600.0, 18000.0));
     }
 }

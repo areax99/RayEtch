@@ -150,7 +150,8 @@ fn interval_window(app: &mut RayEtch, ctx: &egui::Context) {
     }
 }
 
-fn axis_box(ui: &mut egui::Ui, id: &str, a: &mut Axis, columns: bool, center_enabled: bool) {
+fn axis_box(ui: &mut egui::Ui, id: &str, a: &mut Axis, columns: bool, center_enabled: bool) -> bool {
+    let start = a.param;
     egui::Frame::new().fill(crate::theme::p().field).corner_radius(4.0).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
         egui::Grid::new(id).num_columns(2).spacing(vec2(8.0, 8.0)).show(ui, |ui| {
             ui.label(tr("Cont.:"));
@@ -165,14 +166,8 @@ fn axis_box(ui: &mut egui::Ui, id: &str, a: &mut Axis, columns: bool, center_ena
                 }
             });
             if a.param != before {
-                // new parameter: a sensible range to start from (estimated)
-                (a.min, a.max) = match a.param {
-                    MtParam::Speed => (600.0, 6000.0),
-                    MtParam::Power => (10.0, 100.0),
-                    MtParam::Interval => (0.05, 0.2),
-                    MtParam::Passes => (1.0, 10.0),
-                    MtParam::Frequency => (20.0, 60.0),
-                };
+                // new parameter: Min / Max start from its defaults (UpdateControls 0x100d42b9c)
+                (a.min, a.max) = a.param.default_range();
             }
             ui.end_row();
             let (range, dec, step) = match a.param {
@@ -200,36 +195,7 @@ fn axis_box(ui: &mut egui::Ui, id: &str, a: &mut Axis, columns: bool, center_ena
             ui.end_row();
         });
     });
-}
-
-/// Small editor for one of the three settings (00 materiale, 01 testo, 02 bordo).
-fn setting_editor(ui: &mut egui::Ui, id: &str, cs: &mut CutSetting) {
-    egui::Grid::new(id).num_columns(2).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
-        ui.label(tr("Modalità"));
-        egui::ComboBox::from_id_salt((id, "mode")).selected_text(crate::panels::mode_it(cs.mode)).show_ui(ui, |ui| {
-            for m in [CutMode::Line, CutMode::Fill] {
-                ui.selectable_value(&mut cs.mode, m, crate::panels::mode_it(m));
-            }
-        });
-        ui.end_row();
-        ui.label(crate::panels::speed_label());
-        crate::panels::speed_field(ui, &mut cs.speed, 0, None);
-        ui.end_row();
-        ui.label(tr("Potenza massima (%)"));
-        if ui.add(dv(&mut cs.max_power).speed(0.5).range(0.0..=100.0)).changed() {
-            cs.min_power = cs.min_power.min(cs.max_power);
-        }
-        ui.end_row();
-        ui.label(tr("Potenza min. (%)"));
-        ui.add(dv(&mut cs.min_power).speed(0.5).range(0.0..=100.0));
-        ui.end_row();
-        ui.label(tr("Numero passaggi"));
-        ui.add(dv(&mut cs.passes).range(1..=100));
-        ui.end_row();
-        ui.label(tr("Intervallo (mm)"));
-        ui.add(dv(&mut cs.interval).speed(0.001).range(0.01..=5.0).max_decimals(3));
-        ui.end_row();
-    });
+    a.param != start
 }
 
 /// "00 Modifica impostazione materiale": the layer number on its palette colour, then the words.
@@ -249,8 +215,8 @@ fn material_window(app: &mut RayEtch, ctx: &egui::Context) {
     // Centro X / Y only mean something with absolute coordinates (MaterialTest::showEvent 0x100d3fc18)
     let center_enabled = app.job_opts.start_from == crate::gcode::StartFrom::AbsoluteCoords;
     let (ow, oh) = t.output_size(&app.doc);
-    let editing_id = egui::Id::unique("mt_editing");
-    let mut editing: Option<usize> = ctx.data(|d| d.get_temp::<Option<usize>>(editing_id)).flatten();
+    // which of the three settings to open in the cut-settings editor (as the original does)
+    let mut edit: Option<usize> = None;
     let mut sel = app.material_preset_sel.clone();
     let mut save_preset = false;
     let mut delete_preset = false;
@@ -290,11 +256,15 @@ fn material_window(app: &mut RayEtch, ctx: &egui::Context) {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(tr("Verticale / Righe")).strong());
-                axis_box(ui, "mt_rows", &mut t.rows, false, center_enabled);
+                if axis_box(ui, "mt_rows", &mut t.rows, false, center_enabled) {
+                    crate::lasertest::keep_axes_apart(&t.rows, &mut t.cols);
+                }
             });
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(tr("Orizzontale / Colonne")).strong());
-                axis_box(ui, "mt_cols", &mut t.cols, true, center_enabled);
+                if axis_box(ui, "mt_cols", &mut t.cols, true, center_enabled) {
+                    crate::lasertest::keep_axes_apart(&t.cols, &mut t.rows);
+                }
             });
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(tr("Laser")).strong());
@@ -334,18 +304,18 @@ fn material_window(app: &mut RayEtch, ctx: &egui::Context) {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 if layer_button(ui, 0, tr("Modifica impostazione materiale")) {
-                    editing = if editing == Some(0) { None } else { Some(0) };
+                    edit = Some(0);
                 }
             });
             ui.vertical(|ui| {
                 if layer_button(ui, 1, tr("Modifica impostazione testo")) {
-                    editing = if editing == Some(1) { None } else { Some(1) };
+                    edit = Some(1);
                 }
                 crate::panels::switch(ui, &mut t.enable_text, tr("Abilita testo"));
             });
             ui.vertical(|ui| {
                 if layer_button(ui, 2, tr("Modifica impostazione bordo")) {
-                    editing = if editing == Some(2) { None } else { Some(2) };
+                    edit = Some(2);
                 }
                 crate::panels::switch(ui, &mut t.enable_border, tr("Abilita bordo"));
             });
@@ -357,18 +327,15 @@ fn material_window(app: &mut RayEtch, ctx: &egui::Context) {
                 }
             });
         });
-        if let Some(e) = editing {
-            ui.separator();
-            let (title, cs) = match e {
-                0 => (tr("Impostazione materiale (le celle variano i parametri scelti sopra)"), &mut t.material),
-                1 => (tr("Impostazione testo"), &mut t.text),
-                _ => (tr("Impostazione bordo"), &mut t.border),
-            };
-            ui.label(egui::RichText::new(title).strong());
-            setting_editor(ui, "mt_edit", cs);
-        }
     });
-    ctx.data_mut(|d| d.insert_temp(editing_id, editing));
+    // "Modifica impostazione …" opens the same "Editor impostazioni di taglio" as a layer
+    // (the person's pictures 14-16), on the test's own setting
+    if let Some(k) = edit {
+        app.test_edit = Some(k);
+        app.editor_layer = Some(k);
+        app.editor_orig = None;
+        app.editor_tab = 0;
+    }
     if save_preset {
         let name = if t.title.trim().is_empty() { trf("Impostazione {}", &[&(app.material_presets.len() + 1)]) } else { t.title.trim().to_string() };
         app.material_presets.retain(|(n, _)| *n != name);

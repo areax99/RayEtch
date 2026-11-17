@@ -51,6 +51,8 @@ impl Tool {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RightTab {
     Laser,
+    /// "Libreria dei materiali" (CutLibraryWidget), beside Laser as in the original
+    Library,
     Move,
     Console,
     Shape,
@@ -242,6 +244,11 @@ pub struct RayEtch {
     /// Device settings being edited, applied only on OK.
     pub device_draft: Option<Device>,
     pub editor_layer: Option<usize>,
+    /// the editor shows one of the material test's settings (0 material, 1 text, 2 border)
+    pub test_edit: Option<usize>,
+    /// "Libreria dei materiali": its libraries, and the entry open in the cut editor
+    pub material_lib: crate::material_lib::LibState,
+    pub lib_edit: Option<usize>,
     /// The layer's settings when the editor opened, restored by Annulla.
     pub editor_orig: Option<(usize, CutSetting)>,
     /// 0 = Comune, 1 = Avanzate
@@ -408,6 +415,17 @@ impl RayEtch {
             // (its legend tells the two apart)
             // RAYETCH_OPEN=portaccess (for testing): the Linux "Accesso al laser" window
             // RAYETCH_OPEN=jobtimes (for testing): a job 40 % sent, started 5 minutes ago, estimated 12
+            // RAYETCH_OPEN=library (for testing): the material library tab with a sample library
+            // RAYETCH_OPEN=libtab: the library tab with no library open
+            if v.contains("libtab") {
+                app.material_lib = Default::default();
+                app.material_lib.loaded = true;
+                app.right_tab = RightTab::Library;
+            }
+            if v.contains("library") {
+                crate::material_lib::sample(&mut app);
+                app.right_tab = RightTab::Library;
+            }
             if v.contains("jobtimes") {
                 app.job_progress = Some((400, 1000));
                 let mut t = JobTimer::new(720.0);
@@ -574,6 +592,9 @@ impl RayEtch {
             measure: Default::default(),
             device_draft: None,
             editor_layer: None,
+            test_edit: None,
+            material_lib: Default::default(),
+            lib_edit: None,
             editor_orig: None,
             editor_tab: 0,
             cut_defaults: crate::i18n::load_cut_defaults(),

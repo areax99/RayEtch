@@ -579,8 +579,19 @@ impl Raster {
                     self.accumulate(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, a_step);
                 }
             }
-            w => {
-                let r = w.map(|w| w * 0.5).unwrap_or(self.hair_r);
+            Some(w) => {
+                // a scan line: stamped at the middles of its half-pixel steps, so a run covers
+                // the pixels it burns and not the next one (with the ends included, a dithered
+                // picture's 1-pixel dots filled two pixels and looked far darker than it burns)
+                let r = w * 0.5;
+                for i in 0..steps {
+                    let t = (i as f64 + 0.5) / steps as f64;
+                    self.stamp(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, r, k);
+                }
+            }
+            None => {
+                // a cut line: both ends, so corners close
+                let r = self.hair_r;
                 for i in 0..=steps {
                     let t = i as f64 / steps as f64;
                     self.stamp(a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, r, k);

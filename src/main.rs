@@ -14,6 +14,7 @@ mod imageproc;
 mod icons;
 mod import;
 mod import_job;
+mod material_lib;
 mod measure;
 mod laser;
 mod lasertest;
@@ -95,9 +96,30 @@ fn main() -> eframe::Result<()> {
             }
             if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("material")) {
                 a.open_material_test();
+                // material,mtedit1: the cut-settings editor on the test's text setting
+                if let Some(k) = std::env::var("RAYETCH_OPEN").ok().and_then(|v| v.split(',').find_map(|w| w.strip_prefix("mtedit").and_then(|n| n.parse::<usize>().ok()))) {
+                    a.test_edit = Some(k);
+                    a.editor_layer = Some(k);
+                }
+            }
+            // RAYETCH_OPEN=itpreview (and itpreview,dither): the interval test's preview
+            if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("itpreview")) {
+                let mut t = lasertest::IntervalTest::default();
+                t.dithered = std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("dither"));
+                let d = t.build(&a.doc);
+                a.preview_test(d);
             }
             if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("testpreview")) {
-                let d = lasertest::MaterialTest::new(&a.doc.device).build(&a.doc);
+                let mut t = lasertest::MaterialTest::new(&a.doc.device);
+                // testpreview,diodecut: the built-in "Diode - Cut test"
+                if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("diodecut")) {
+                    t.preset(2);
+                }
+                // testpreview,preset<n>: built-in preset n (0 CO2 cut, 1 CO2 engrave, 2 diode cut, 3 diode engrave)
+                if let Some(n) = std::env::var("RAYETCH_OPEN").ok().and_then(|v| v.split(',').find_map(|w| w.strip_prefix("preset").and_then(|n| n.parse::<usize>().ok()))) {
+                    t.preset(n);
+                }
+                let d = t.build(&a.doc);
                 a.preview_test(d);
             }
             // RAYETCH_OPEN=measure (for testing): ruler on the first shape's second piece

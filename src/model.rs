@@ -259,6 +259,9 @@ pub struct CutSetting {
     pub z_per_pass: f64,
     /// "scanOpt" (+0x94)
     pub fill_grouping: FillGrouping,
+    /// "Collega" (Libreria dei materiali): the library entry this layer follows, as
+    /// "library file|material|thickness|description"; updates to the entry reach the layer
+    pub lib_link: Option<String>,
     /// "rampLength" (+0x7c), mm
     pub ramp_length: f64,
     /// "rampOuter" (+0x80)
@@ -333,6 +336,7 @@ impl Default for CutSetting {
             z_offset: 0.0,
             z_per_pass: 0.0,
             fill_grouping: FillGrouping::MergeAll,
+            lib_link: None,
             ramp_length: 0.0,
             ramp_outer: false,
             flood_fill: false,
