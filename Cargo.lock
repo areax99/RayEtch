@@ -3339,6 +3339,7 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "raw-window-handle",
  "rfd",
  "roxmltree 0.21.2",
  "serde",

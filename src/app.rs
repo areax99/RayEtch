@@ -2065,6 +2065,12 @@ impl RayEtch {
             if let Some(dir) = ss.path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
+            // Windows often hands back the window's see-through alpha (the same dark
+            // sheet a modal dialog paints). The colours are already the real ones:
+            // keep them and store a solid picture.
+            for px in buf.chunks_exact_mut(4) {
+                px[3] = 255;
+            }
             match image::RgbaImage::from_raw(w as u32, h as u32, buf) {
                 Some(im) => {
                     if let Err(e) = im.save(&ss.path) {
@@ -2120,6 +2126,14 @@ pub fn scripted_input() -> Vec<(u32, egui::Event)> {
 }
 
 impl eframe::App for RayEtch {
+    /// eframe's own background is a near-black colour that is partly see-through
+    /// (alpha 180), the same dark sheet a modal dialog lays over a window. On
+    /// Windows that sheet stays in the picture and hides the workspace. This
+    /// window is solid, so the background is solid too.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        crate::theme::p().bg.to_opaque().to_normalized_gamma_f32()
+    }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(p) = self.relaunch_on_exit.take() {
             crate::update::relaunch(&p);
@@ -2139,8 +2153,16 @@ impl eframe::App for RayEtch {
         raw_input.events.extend(self.input_script.iter().filter(|(at, _)| *at == f).map(|(_, e)| e.clone()));
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Windows 11 paints its own dark acrylic (the material behind a modal
+        // dialog) over a borderless window. Turn that sheet off.
+        #[cfg(windows)]
+        disable_windows_backdrop(frame);
+        #[cfg(not(windows))]
+        let _ = frame;
         let ctx = ui.ctx().clone();
+        // A solid coat under everything, so no translucent gap can dim the window.
+        ui.painter().rect_filled(ui.max_rect(), 0.0, crate::theme::p().bg.to_opaque());
         self.poll_laser();
         self.poll_import(&ctx);
         self.auto_connect(&ctx);
@@ -2429,6 +2451,44 @@ fn write_job_log(project: &str, secs: f64, lines: usize) {
 }
 
 /// "AAAA-MM-GG hh:mm" in UTC, without a date library (days to civil date, H. Hinnant's method).
+/// Windows 11 draws a dark acrylic sheet (the same material it puts behind a
+/// modal dialog) across a window with no title bar. Ask it not to.
+#[cfg(windows)]
+fn disable_windows_backdrop(frame: &eframe::Frame) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    if DONE.load(Ordering::Relaxed) {
+        return;
+    }
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    let Ok(handle) = frame.window_handle() else { return };
+    let RawWindowHandle::Win32(window) = handle.as_raw() else { return };
+    let hwnd = window.hwnd.get() as *mut std::ffi::c_void;
+
+    #[repr(C)]
+    struct BlurBehind {
+        flags: u32,
+        enable: i32,
+        region: *mut std::ffi::c_void,
+        transition: i32,
+    }
+
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(hwnd: *mut std::ffi::c_void, attr: u32, value: *const std::ffi::c_void, size: u32) -> i32;
+        fn DwmEnableBlurBehindWindow(hwnd: *mut std::ffi::c_void, blur: *const BlurBehind) -> i32;
+    }
+
+    unsafe {
+        // DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_NONE = 1
+        let none: i32 = 1;
+        DwmSetWindowAttribute(hwnd, 38, &none as *const i32 as *const std::ffi::c_void, 4);
+        let blur = BlurBehind { flags: 0x1, enable: 0, region: std::ptr::null_mut(), transition: 0 };
+        DwmEnableBlurBehindWindow(hwnd, &blur);
+    }
+    DONE.store(true, Ordering::Relaxed);
+}
+
 fn utc_now() -> String {
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as i64;
     let (days, rem) = (t.div_euclid(86_400), t.rem_euclid(86_400));
