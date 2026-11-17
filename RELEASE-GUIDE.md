@@ -140,6 +140,8 @@ sh scripts/package-linux-installer.sh
 
 The `.tar.gz` archive is created in `release-archives/`. On the target computer, extract it and run `sh install.sh` from the extracted folder to install RayEtch for the current user without `sudo`. Run `sh uninstall.sh` from that folder to remove it. Build and target computers must use the same supported architecture, and the target must provide the required system libraries.
 
+On Debian/Ubuntu, Fedora, Arch Linux and openSUSE, run `sh install-with-dependencies.sh` instead to install the common runtime packages with `sudo` before installing RayEtch for the current user. The script asks for confirmation and requires configured package repositories and network access. System packages remain installed after `sh uninstall.sh`. It checks linked libraries but cannot guarantee graphics drivers, desktop portal functionality or binary compatibility across all Linux versions.
+
 ### Verify the build
 
 Confirm that the build finishes without errors, then launch the app or executable on the target operating system. If possible, test it on another computer as well. macOS builds are signed locally, not notarized by Apple, so macOS may ask you to authorize the app before opening it.
@@ -281,6 +283,8 @@ sh scripts/package-linux-installer.sh
 ```
 
 L'archivio `.tar.gz` viene creato in `release-archives/`. Sul computer di destinazione, estrailo ed esegui `sh install.sh` dalla cartella estratta per installare RayEtch per l'utente corrente senza `sudo`. Per rimuoverlo, esegui `sh uninstall.sh` dalla stessa cartella. I due computer devono usare la stessa architettura supportata e quello di destinazione deve disporre delle librerie di sistema necessarie.
+
+Su Debian/Ubuntu, Fedora, Arch Linux e openSUSE, esegui invece `sh install-with-dependencies.sh` per installare con `sudo` i pacchetti di runtime comuni prima di installare RayEtch per l'utente corrente. Lo script chiede conferma e richiede repository configurati e accesso alla rete. I pacchetti di sistema rimangono installati dopo `sh uninstall.sh`. Il controllo delle librerie collegate non garantisce il funzionamento dei driver grafici, del portale desktop o la compatibilità con tutte le versioni di Linux.
 
 ### Verificare la compilazione
 
@@ -424,6 +428,8 @@ sh scripts/package-linux-installer.sh
 
 El archivo `.tar.gz` se crea en `release-archives/`. En el equipo de destino, extráelo y ejecuta `sh install.sh` desde la carpeta extraída para instalar RayEtch para el usuario actual, sin `sudo`. Para desinstalarlo, ejecuta `sh uninstall.sh` desde esa carpeta. Ambos equipos deben usar la misma arquitectura compatible y el equipo de destino debe tener las bibliotecas del sistema necesarias.
 
+En Debian/Ubuntu, Fedora, Arch Linux y openSUSE, ejecuta en su lugar `sh install-with-dependencies.sh` para instalar con `sudo` los paquetes de ejecución habituales antes de instalar RayEtch para el usuario actual. El script pide confirmación y requiere repositorios configurados y acceso a la red. Los paquetes del sistema permanecen instalados tras `sh uninstall.sh`. La comprobación de bibliotecas enlazadas no garantiza los controladores gráficos, el portal de escritorio ni la compatibilidad con todas las versiones de Linux.
+
 ### Verificar la compilación
 
 Comprueba que la compilación termine sin errores y ejecuta la aplicación o el archivo ejecutable en el sistema operativo previsto. Si es posible, pruébalo también en otro ordenador. Apple no notariza las compilaciones de macOS, por lo que quizá tengas que autorizar la aplicación antes de abrirla.
@@ -566,6 +572,8 @@ sh scripts/package-linux-installer.sh
 
 L'archive `.tar.gz` est créée dans `release-archives/`. Sur l'ordinateur cible, extrayez-la et exécutez `sh install.sh` depuis le dossier extrait pour installer RayEtch pour l'utilisateur actuel, sans `sudo`. Pour le désinstaller, exécutez `sh uninstall.sh` depuis ce dossier. Les deux ordinateurs doivent utiliser la même architecture prise en charge et l'ordinateur cible doit disposer des bibliothèques système requises.
 
+Sur Debian/Ubuntu, Fedora, Arch Linux et openSUSE, exécutez plutôt `sh install-with-dependencies.sh` pour installer avec `sudo` les paquets d'exécution courants avant RayEtch pour l'utilisateur actuel. Le script demande confirmation et nécessite des dépôts configurés et un accès réseau. Les paquets système restent installés après `sh uninstall.sh`. La vérification des bibliothèques liées ne garantit pas les pilotes graphiques, le portail de bureau ni la compatibilité avec toutes les versions de Linux.
+
 ### Vérifier la compilation
 
 Vérifiez que la compilation se termine sans erreur, puis lancez l'application ou l'exécutable sur le système d'exploitation prévu. Si possible, testez-le également sur un autre ordinateur. Apple ne notarie pas les compilations macOS ; il peut donc être nécessaire d'autoriser l'application avant de l'ouvrir.
@@ -707,6 +715,8 @@ sh scripts/package-linux-installer.sh
 ```
 
 Das `.tar.gz`-Archiv wird in `release-archives/` erstellt. Entpacke es auf dem Zielrechner und führe im entpackten Ordner `sh install.sh` aus, um RayEtch ohne `sudo` für den aktuellen Benutzer zu installieren. Mit `sh uninstall.sh` aus demselben Ordner kannst du es wieder entfernen. Beide Rechner müssen dieselbe unterstützte Architektur verwenden; auf dem Zielrechner müssen außerdem die erforderlichen Systembibliotheken vorhanden sein.
+
+Auf Debian/Ubuntu, Fedora, Arch Linux und openSUSE kannst du stattdessen `sh install-with-dependencies.sh` ausführen, um vor der Installation für den aktuellen Benutzer die üblichen Laufzeitpakete mit `sudo` zu installieren. Das Skript fragt nach einer Bestätigung und benötigt konfigurierte Paketquellen und Netzwerkzugriff. Die Systempakete bleiben nach `sh uninstall.sh` installiert. Die Prüfung der verknüpften Bibliotheken garantiert weder funktionierende Grafiktreiber und Desktop-Portale noch Kompatibilität mit allen Linux-Versionen.
 
 ### Build überprüfen
 

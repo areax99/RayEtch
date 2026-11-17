@@ -116,6 +116,7 @@ done
 install -m 644 packaging/linux/rayetch.desktop "$PACKAGE_DIR/rayetch.desktop"
 install -m 644 packaging/linux/rayetch-mime.xml "$PACKAGE_DIR/rayetch-mime.xml"
 install -m 755 packaging/linux/install-package.sh "$PACKAGE_DIR/install.sh"
+install -m 755 packaging/linux/install-with-dependencies.sh "$PACKAGE_DIR/install-with-dependencies.sh"
 install -m 755 packaging/linux/uninstall-package.sh "$PACKAGE_DIR/uninstall.sh"
 install -m 644 README.md LICENSE NOTICE "$PACKAGE_DIR/"
 printf '%s\n' "$HOST" > "$PACKAGE_DIR/rust-target"
@@ -135,4 +136,4 @@ elif ! ln "$ARCHIVE" "$OUTPUT"; then
 fi
 
 echo "Distribuzione creata: $OUTPUT"
-echo "Estrai l'archivio ed esegui sh install.sh per installare."
+echo "Estrai l'archivio ed esegui sh install-with-dependencies.sh per installare anche le librerie."
