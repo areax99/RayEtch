@@ -915,7 +915,7 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 let r = s.rot.rem_euclid(360.0);
                 if r > 180.0 { r - 360.0 } else { r }
             }).unwrap_or(0.0);
-            let rot_focus: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(egui::Id::new("nb_rot_id")));
+            let rot_focus: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(egui::Id::unique("nb_rot_id")));
             let editing_rot = rot_focus.is_some_and(|id| ui.ctx().memory(|m| m.has_focus(id)) || ui.ctx().is_being_dragged(id));
             if app.rot_for != app.selection || !editing_rot {
                 app.rot_for = app.selection.clone();
@@ -1009,7 +1009,7 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                     nb_label(ui, tr("Ruota"));
                     let r = ui.push_id("nb_rot", |ui| nb_field(ui, 72.0, crate::i18n::dv(&mut app.rot_input).speed(0.5).max_decimals(2).range(-360.0..=360.0).suffix("°"))).inner;
                     // remember the box's id so the angle isn't refreshed under the person's typing
-                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("nb_rot_id"), r.id));
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("nb_rot_id"), r.id));
                     // turned around the reference point chosen in the 9-dot grid, to the typed angle:
                     // a typed value counts on Enter or leaving the box, a dragged one as it moves
                     let apply = r.lost_focus() || r.dragged() || r.drag_stopped();
