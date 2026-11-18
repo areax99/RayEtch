@@ -5,15 +5,41 @@ use std::sync::{Arc, OnceLock};
 
 pub struct FontEntry {
     pub name: String,
-    pub data: Arc<Vec<u8>>,
+    /// Where a system font lives; read only when the font is first used.
+    path: Option<std::path::PathBuf>,
+    bytes: OnceLock<Option<Arc<Vec<u8>>>>,
 }
 
+impl FontEntry {
+    fn built_in(name: &str, bytes: &[u8]) -> Self {
+        let cell = OnceLock::new();
+        let _ = cell.set(Some(Arc::new(bytes.to_vec())));
+        FontEntry { name: name.into(), path: None, bytes: cell }
+    }
+
+    /// The font file's bytes, read the first time they're needed (None when it can't be read
+    /// or isn't a font).
+    pub fn data(&self) -> Option<Arc<Vec<u8>>> {
+        self.bytes
+            .get_or_init(|| {
+                let bytes = std::fs::read(self.path.as_ref()?).ok()?;
+                ttf_parser::Face::parse(&bytes, 0).ok()?;
+                Some(Arc::new(bytes))
+            })
+            .clone()
+    }
+}
+
+/// The fonts offered for text: the two built in, then the system's by file name. Only the
+/// names are listed here; a system font's file is read when it is first used. Windows keeps
+/// hundreds of large fonts, and reading them all while the window opened kept an old PC
+/// from drawing or answering for a long time.
 pub fn fonts() -> &'static Vec<FontEntry> {
     static FONTS: OnceLock<Vec<FontEntry>> = OnceLock::new();
     FONTS.get_or_init(|| {
         let mut v = vec![
-            FontEntry { name: "Sans (built-in)".into(), data: Arc::new(epaint_default_fonts::UBUNTU_LIGHT.to_vec()) },
-            FontEntry { name: "Mono (built-in)".into(), data: Arc::new(epaint_default_fonts::HACK_REGULAR.to_vec()) },
+            FontEntry::built_in("Sans (built-in)", epaint_default_fonts::UBUNTU_LIGHT),
+            FontEntry::built_in("Mono (built-in)", epaint_default_fonts::HACK_REGULAR),
         ];
         let dirs = ["/System/Library/Fonts/Supplemental", "/Library/Fonts", "/usr/share/fonts/truetype", "C:\\Windows\\Fonts"];
         let mut found: Vec<(String, std::path::PathBuf)> = Vec::new();
@@ -33,11 +59,7 @@ pub fn fonts() -> &'static Vec<FontEntry> {
         found.sort();
         found.dedup_by(|a, b| a.0 == b.0);
         for (name, path) in found.into_iter().take(200) {
-            if let Ok(bytes) = std::fs::read(&path) {
-                if ttf_parser::Face::parse(&bytes, 0).is_ok() {
-                    v.push(FontEntry { name, data: Arc::new(bytes) });
-                }
-            }
+            v.push(FontEntry { name, path: Some(path), bytes: OnceLock::new() });
         }
         v
     })
@@ -152,8 +174,9 @@ fn is_rtl(c: char) -> bool {
 /// Build outlines (mm, Y up) centred on the origin. `size` is the cap height-ish em size in mm.
 pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
     let list = fonts();
-    let entry = list.iter().find(|f| f.name == font_name).unwrap_or(&list[0]);
-    let Ok(face) = ttf_parser::Face::parse(&entry.data, 0) else { return Vec::new() };
+    let data = list.iter().find(|f| f.name == font_name).and_then(|f| f.data()).or_else(|| list[0].data());
+    let Some(data) = data else { return Vec::new() };
+    let Ok(face) = ttf_parser::Face::parse(&data, 0) else { return Vec::new() };
     let upem = face.units_per_em() as f64;
     let scale = size / upem;
     let line_h = (face.ascender() as f64 - face.descender() as f64 + face.line_gap() as f64) * scale;
