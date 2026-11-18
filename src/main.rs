@@ -70,40 +70,52 @@ fn main() -> eframe::Result<()> {
         let options = eframe::NativeOptions { viewport: viewport.clone(), renderer, wgpu_options: wgpu_options(), ..Default::default() };
         eframe::run_native("RayEtch", options, Box::new(move |cc| Ok(Box::new(make_app(cc, screenshot, open_file)))))
     };
-    match run(first, screenshot.clone(), open_file.clone()) {
-        // no graphics card wgpu can use (an old PC without DirectX 12 / Vulkan, or only Windows'
-        // software drawing): OpenGL instead, which such PCs have
-        Err(e) if first == eframe::Renderer::Wgpu => {
+    match run(first, screenshot, open_file) {
+        // wgpu couldn't start (no DirectX 12 at all): start again on OpenGL. A program may
+        // open its window system only once, so the new start is a fresh copy of RayEtch.
+        Err(e) if first == eframe::Renderer::Wgpu && std::env::var_os("RAYETCH_RENDERER").is_none() => {
             eprintln!("wgpu non disponibile ({e}): uso OpenGL");
-            run(eframe::Renderer::Glow, screenshot, open_file)
+            let exe = std::env::current_exe().map_err(|_| e)?;
+            let _ = std::process::Command::new(exe).args(&args[1..]).env("RAYETCH_RENDERER", "opengl").spawn();
+            Ok(())
         }
         r => r,
     }
 }
 
-/// wgpu takes a real graphics card only: Windows' software DirectX ("Microsoft Basic Render
-/// Driver", WARP) and other drawing on the processor are refused, so an old PC falls back to
-/// OpenGL instead of crawling (the person's 2011 PC). A discrete card comes first.
+/// How wgpu picks its graphics card. On Windows it uses DirectX 12 only: the person's 2011
+/// HP Pavilion dv7 has OpenGL and Vulkan drivers that draw garbage (broken colours, torn
+/// triangles, unreadable text) or freeze, and its card has no DirectX 12 driver, so Windows'
+/// own DirectX 12 software drawing (WARP, "Microsoft Basic Render Driver") is taken instead:
+/// slower, but always right. A real DirectX 12 card comes first. Elsewhere a real card only;
+/// drawing on the processor is refused there, as the system's OpenGL is the better fallback.
 fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
     use eframe::egui_wgpu::{WgpuSetup, wgpu};
     let mut cfg = eframe::egui_wgpu::WgpuConfiguration::default();
     if let WgpuSetup::CreateNew(ref mut new) = cfg.wgpu_setup {
+        if cfg!(windows) {
+            new.instance_descriptor.backends = wgpu::Backends::DX12;
+        }
         new.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
-            let rank = |t: wgpu::DeviceType| match t {
-                wgpu::DeviceType::DiscreteGpu => 0,
-                wgpu::DeviceType::IntegratedGpu => 1,
-                wgpu::DeviceType::VirtualGpu => 2,
-                wgpu::DeviceType::Other => 3,
-                wgpu::DeviceType::Cpu => 9,
+            let software = |a: &wgpu::Adapter| a.get_info().device_type == wgpu::DeviceType::Cpu || a.get_info().name.to_lowercase().contains("basic render");
+            let rank = |a: &wgpu::Adapter| {
+                if software(a) {
+                    return 9;
+                }
+                match a.get_info().device_type {
+                    wgpu::DeviceType::DiscreteGpu => 0,
+                    wgpu::DeviceType::IntegratedGpu => 1,
+                    wgpu::DeviceType::VirtualGpu => 2,
+                    _ => 3,
+                }
             };
             adapters
                 .iter()
-                .filter(|a| a.get_info().device_type != wgpu::DeviceType::Cpu)
-                .filter(|a| !a.get_info().name.to_lowercase().contains("basic render"))
+                .filter(|a| cfg!(windows) || !software(a))
                 .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
-                .min_by_key(|a| rank(a.get_info().device_type))
+                .min_by_key(|a| rank(a))
                 .cloned()
-                .ok_or_else(|| "nessuna scheda video adatta (solo disegno software)".to_string())
+                .ok_or_else(|| "nessuna scheda video adatta".to_string())
         }));
     }
     cfg
@@ -174,13 +186,17 @@ fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::Path
 
 /// The window and Dock/taskbar icon, built into the program (assets/icon.png, made by
 /// `cargo run --example make_icon`).
-/// How the window is drawn: OpenGL (glow) everywhere. wgpu was tried on Windows, but on the
-/// person's 2011 PC (Intel graphics without DirectX 12 / Vulkan) it opened a black window that
-/// froze, while OpenGL runs smoothly on the same PC under Linux Mint. RAYETCH_RENDERER=wgpu
-/// still picks wgpu, for a computer where OpenGL draws badly.
+/// How the window is drawn. Windows: wgpu on DirectX 12 (see wgpu_options), because OpenGL
+/// drew a garbled, frozen window on the person's 2011 PC; if wgpu can't start at all, OpenGL.
+/// macOS and Linux: OpenGL (glow), which runs smoothly on the same PC under Linux Mint.
+/// RAYETCH_RENDERER=wgpu or =opengl, or "wgpu"/"opengl" in renderer.json beside the
+/// settings, picks one by hand.
 fn renderer() -> eframe::Renderer {
-    match std::env::var("RAYETCH_RENDERER").map(|v| v.to_ascii_lowercase()) {
-        Ok(v) if v == "wgpu" => eframe::Renderer::Wgpu,
+    let choice = std::env::var("RAYETCH_RENDERER").ok().or_else(|| crate::i18n::load_json::<String>("renderer.json"));
+    match choice.map(|v| v.to_ascii_lowercase()).as_deref() {
+        Some("wgpu" | "directx" | "dx12") => eframe::Renderer::Wgpu,
+        Some("opengl" | "gl" | "glow") => eframe::Renderer::Glow,
+        _ if cfg!(windows) => eframe::Renderer::Wgpu,
         _ => eframe::Renderer::Glow,
     }
 }
