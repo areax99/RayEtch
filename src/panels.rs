@@ -2057,13 +2057,15 @@ fn laser_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
         }
     });
     if let Some((a, b)) = app.job_progress {
-        let done = a as f64 / b.max(1) as f64;
+        // the bar follows the job's time, not its count of lines (an engraving has many short
+        // lines, a cut a few long ones)
+        let done = app.job_timer.as_ref().map(|t| t.time_done(a, b)).unwrap_or(a as f64 / b.max(1) as f64);
         ui.add(egui::ProgressBar::new(done as f32).text(trf("Invio {} / {} righe", &[&a, &b])).fill(ACCENT));
         // elapsed and remaining time of the running job (the person's request)
         if let Some(t) = &app.job_timer {
             use crate::app::clock_text;
             let elapsed = t.elapsed();
-            let left = t.remaining(done);
+            let left = t.remaining(a, b);
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(trf("Trascorso: {}", &[&clock_text(elapsed)])).monospace());
                 ui.add_space(12.0);

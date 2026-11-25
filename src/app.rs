@@ -428,7 +428,7 @@ impl RayEtch {
             }
             if v.contains("jobtimes") {
                 app.job_progress = Some((400, 1000));
-                let mut t = JobTimer::new(720.0);
+                let mut t = JobTimer::new(720.0, &[]);
                 t.start = Instant::now() - Duration::from_secs(300);
                 app.job_timer = Some(t);
             }
@@ -1153,11 +1153,13 @@ impl RayEtch {
             }
             return;
         }
-        let lines: Vec<String> = g.lines().map(|l| l.to_string()).collect();
+        let lines = crate::gcode::sendable_lines(&g);
         let n = lines.len();
+        let sim = crate::gcode::Job::sim_for(&self.doc);
+        let line_secs = crate::gcode::line_seconds(&lines, &sim);
         self.laser.send(Cmd::Lines(lines, true));
         self.job_progress = Some((0, 1));
-        self.job_timer = Some(JobTimer::new(job.estimate_seconds_sim(&crate::gcode::Job::sim_for(&self.doc))));
+        self.job_timer = Some(JobTimer::new(job.estimate_seconds_sim(&sim), &line_secs));
         self.paused = false;
         self.status = tr("Lavoro avviato").into();
         // "Salva registro lavori": one line per job in joblog.csv beside the settings
@@ -1175,10 +1177,12 @@ impl RayEtch {
         }
         if let Some(p) = rfd::FileDialog::new().add_filter("G-code", &["gc", "nc", "gcode", "txt"]).pick_file() {
             if let Ok(s) = std::fs::read_to_string(&p) {
-                self.laser.send(Cmd::Lines(s.lines().map(|l| l.to_string()).collect(), true));
+                let lines = crate::gcode::sendable_lines(&s);
+                let line_secs = crate::gcode::line_seconds(&lines, &crate::gcode::Job::sim_for(&self.doc));
+                self.laser.send(Cmd::Lines(lines, true));
                 self.job_progress = Some((0, 1));
-                // a G-code file has no estimate: the times follow its pace
-                self.job_timer = Some(JobTimer::new(0.0));
+                // a G-code file has no plan: its lines' own times make the estimate
+                self.job_timer = Some(JobTimer::new(0.0, &line_secs));
                 self.status = trf("In esecuzione {}", &[&p.display()]);
             }
         }
@@ -2205,6 +2209,7 @@ impl eframe::App for RayEtch {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         self.screen_size_check(&ctx);
+        start_maximized(&ctx, self.screenshot.is_some());
         crate::panels::SPEED_MM_S.store(self.doc.device.speed_mm_s, std::sync::atomic::Ordering::Relaxed);
         if let Some(t) = self.clip_out.take() {
             ctx.copy_text(t);
@@ -2367,15 +2372,33 @@ impl RayEtch {
 /// The clock of a running job, for the times under the laser buttons.
 pub struct JobTimer {
     pub start: Instant,
-    /// estimated length from the preview's motion model, seconds (0 = unknown)
+    /// estimated length from the preview's motion model, seconds
     pub estimate: f64,
     pub paused_at: Option<Instant>,
     pub paused_total: Duration,
+    /// share of the job's time done once `i` lines are sent (len = lines + 1); empty = by lines
+    cum: Vec<f64>,
+    /// the last time shown and when, so the countdown runs smoothly
+    shown: std::cell::Cell<Option<(f64, f64)>>,
 }
 
 impl JobTimer {
-    pub fn new(estimate: f64) -> Self {
-        JobTimer { start: Instant::now(), estimate, paused_at: None, paused_total: Duration::ZERO }
+    /// `line_secs`: each sent line's own time (gcode::line_seconds), to weigh the progress.
+    /// With no estimate (a G-code file) their sum is the estimate.
+    pub fn new(estimate: f64, line_secs: &[f64]) -> Self {
+        let sum: f64 = line_secs.iter().sum();
+        let mut cum = Vec::new();
+        if sum > 0.0 {
+            cum.reserve(line_secs.len() + 1);
+            let mut acc = 0.0;
+            cum.push(0.0);
+            for t in line_secs {
+                acc += t;
+                cum.push(acc / sum);
+            }
+        }
+        let estimate = if estimate > 0.0 { estimate } else { sum };
+        JobTimer { start: Instant::now(), estimate, paused_at: None, paused_total: Duration::ZERO, cum, shown: std::cell::Cell::new(None) }
     }
 
     /// Seconds the job has been running, pauses left out.
@@ -2384,22 +2407,52 @@ impl JobTimer {
         now.saturating_duration_since(self.start).saturating_sub(self.paused_total).as_secs_f64()
     }
 
-    /// Seconds left, from how far the job has got (`done` of 0..1): the pace so far once a
-    /// little of it has run, blended with the estimate early on when the pace says little yet.
-    pub fn remaining(&self, done: f64) -> Option<f64> {
-        let e = self.elapsed();
-        let f = done.clamp(0.0, 1.0);
-        let by_pace = (f > 0.0).then(|| e * (1.0 - f) / f);
-        let by_estimate = (self.estimate > 0.0).then(|| (self.estimate - e).max(0.0));
-        match (by_pace, by_estimate) {
-            (Some(p), Some(s)) => {
-                // trust the pace more as the job goes on (fully from a quarter of the way)
-                let w = (f / 0.25).min(1.0);
-                Some(p * w + s * (1.0 - w))
-            }
-            (Some(p), None) => (f > 0.02).then_some(p),
-            (None, s) => s,
+    /// Share of the job's time done when `sent` of `total` lines have gone (0..1). Lines are
+    /// weighed by their own time; a `$X` put in front by the connection shifts the count by one.
+    pub fn time_done(&self, sent: usize, total: usize) -> f64 {
+        if self.cum.len() >= 2 {
+            let n = self.cum.len() - 1;
+            let i = sent.saturating_sub(total.saturating_sub(n)).min(n);
+            self.cum[i]
+        } else {
+            sent as f64 / total.max(1) as f64
         }
+    }
+
+    /// Seconds left, without smoothing: the estimate of the part still to do, corrected by how
+    /// fast the machine has really gone so far (fully trusted from a quarter of the job).
+    pub fn remaining_raw(&self, f: f64) -> Option<f64> {
+        let f = f.clamp(0.0, 1.0);
+        if self.estimate <= 0.0 {
+            return None;
+        }
+        let left = self.estimate * (1.0 - f);
+        let e = self.elapsed();
+        let done_est = self.estimate * f;
+        if f < 0.02 || e < 5.0 || done_est <= 0.0 {
+            return Some((self.estimate - e).max(0.0));
+        }
+        let ratio = (e / done_est).clamp(0.33, 3.0);
+        let w = (f / 0.25).min(1.0);
+        Some(left * (1.0 + (ratio - 1.0) * w))
+    }
+
+    /// Seconds left as shown: it counts down a second each second and drifts gently toward the
+    /// new figure, so it doesn't jump with each batch of lines the laser takes.
+    pub fn remaining(&self, sent: usize, total: usize) -> Option<f64> {
+        let target = self.remaining_raw(self.time_done(sent, total))?;
+        let now = self.elapsed();
+        let shown = match self.shown.get() {
+            Some((prev, at)) => {
+                let dt = (now - at).max(0.0);
+                let ticking = (prev - dt).max(0.0);
+                let k = (dt / 8.0).min(1.0);
+                ticking + (target - ticking) * k
+            }
+            None => target,
+        };
+        self.shown.set(Some((shown, now)));
+        Some(shown.max(0.0))
     }
 
     /// Keep the clock still while the job is paused.
@@ -2413,6 +2466,42 @@ impl JobTimer {
             _ => {}
         }
     }
+}
+
+/// Open filling the screen on Linux and Windows too. The window has no system frame, and many
+/// Linux window managers ignore "maximised" asked for before such a window first shows (the
+/// person's Linux Mint opened it smaller). So once it is on screen it is asked again; if it
+/// still isn't maximised a moment later, it is placed at the screen's top-left at the
+/// screen's size. Only at start: later the person sizes it as they like.
+fn start_maximized(ctx: &egui::Context, screenshot: bool) {
+    if cfg!(target_os = "macos") || screenshot {
+        return;
+    }
+    let id = egui::Id::unique("start_maximized_frame");
+    let frame: u32 = ctx.data_mut(|d| {
+        let f = d.get_temp_mut_or(id, 0u32);
+        *f = f.saturating_add(1);
+        *f
+    });
+    if frame > 60 {
+        return;
+    }
+    let (maximized, fullscreen, monitor) = ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false), i.viewport().monitor_size));
+    if maximized || fullscreen {
+        ctx.data_mut(|d| d.insert_temp(id, 1000u32));
+        return;
+    }
+    match frame {
+        3 | 20 => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true)),
+        45 => {
+            if let Some(m) = monitor {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(m));
+            }
+        }
+        _ => {}
+    }
+    ctx.request_repaint();
 }
 
 /// "h:mm:ss" or "m:ss".
@@ -2509,16 +2598,27 @@ mod job_timer_tests {
     use super::*;
 
     #[test]
-    fn remaining_follows_pace_and_estimate() {
-        // 5 minutes in, 40 % done, estimated 12 minutes
-        let mut t = JobTimer::new(720.0);
+    fn remaining_follows_time_and_pace() {
+        // two lines: a 1 s step and a 9 s cut; after the first only a tenth of the time is done
+        let t = JobTimer::new(10.0, &[1.0, 9.0]);
+        assert!((t.time_done(1, 2) - 0.1).abs() < 1e-9);
+        // a "$X" sent first shifts the count by one
+        assert!((t.time_done(2, 3) - 0.1).abs() < 1e-9);
+        // 5 minutes in, 40 % of the time done, estimated 12 minutes: the machine runs slower
+        // than estimated (300 s for 288 s), so a bit more than the 432 s estimated is left
+        let mut t = JobTimer::new(720.0, &[]);
         t.start = Instant::now() - Duration::from_secs(300);
-        let r = t.remaining(0.4).unwrap();
-        // from the pace alone 450 s are left; past a quarter the pace is trusted fully
+        let r = t.remaining_raw(0.4).unwrap();
         assert!((r - 450.0).abs() < 2.0, "{r}");
         // at the start only the estimate speaks
-        let fresh = JobTimer::new(600.0);
-        assert!((fresh.remaining(0.0).unwrap() - 600.0).abs() < 1.0);
+        let fresh = JobTimer::new(600.0, &[]);
+        assert!((fresh.remaining(0, 10).unwrap() - 600.0).abs() < 1.0);
+        // G-code line times: 10 mm at F600 (10 mm/s) is 1 s, relative and inch modes followed
+        let sim = crate::gcode::Sim { rapid: 100.0, ..Default::default() };
+        let l: Vec<String> = ["G21", "G90", "G1X10F600", "G0X110", "G91", "G1Y10", "G4P2"].iter().map(|s| s.to_string()).collect();
+        let s = crate::gcode::line_seconds(&l, &sim);
+        assert_eq!(s.len(), 7);
+        assert!((s[2] - 1.0).abs() < 1e-9 && (s[3] - 1.0).abs() < 1e-9 && (s[5] - 1.0).abs() < 1e-9 && (s[6] - 2.0).abs() < 1e-9, "{s:?}");
         assert_eq!(clock_text(3725.0), "1:02:05");
         assert_eq!(clock_text(65.0), "1:05");
     }

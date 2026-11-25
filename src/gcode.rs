@@ -246,6 +246,84 @@ impl Job {
     }
 }
 
+/// The lines of a job as the laser connection sends them: trimmed, without empty lines and
+/// `;` comments (laser.rs counts the progress over these).
+pub fn sendable_lines(g: &str) -> Vec<String> {
+    g.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty() && !l.starts_with(';')).collect()
+}
+
+/// Seconds each G-code line takes at its own speed (distance ÷ feed, rapids at the device's
+/// rapid speed; G4 dwells; no acceleration). Only the shares matter: they weigh the lines
+/// for the running job's progress, so a long cut counts more than a short engraving step.
+pub fn line_seconds(lines: &[String], sim: &Sim) -> Vec<f64> {
+    let rapid = (sim.rapid * (sim.global_scale / 100.0).max(0.01)).max(1.0);
+    let (mut pos, mut feed, mut absolute, mut scale, mut motion) = ([0.0f64; 2], 1000.0f64, true, 1.0f64, 0u32);
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        let text = line.split(';').next().unwrap_or("").to_ascii_uppercase();
+        if text.starts_with('$') {
+            out.push(0.0);
+            continue;
+        }
+        let mut words: Vec<(char, f64)> = Vec::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if !c.is_ascii_alphabetic() {
+                continue;
+            }
+            let mut num = String::new();
+            while let Some(&d) = chars.peek() {
+                if d.is_ascii_digit() || d == '.' || d == '-' || d == '+' {
+                    num.push(d);
+                    chars.next();
+                } else if d == ' ' {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if let Ok(v) = num.parse::<f64>() {
+                words.push((c, v));
+            }
+        }
+        let mut target = pos;
+        let (mut moved, mut dwell) = (false, 0.0);
+        let mut dwell_line = false;
+        for &(c, v) in &words {
+            match c {
+                'G' => match v.round() as i64 {
+                    0 => motion = 0,
+                    1 => motion = 1,
+                    2 | 3 => motion = 1,
+                    4 => dwell_line = true,
+                    20 => scale = 25.4,
+                    21 => scale = 1.0,
+                    90 => absolute = true,
+                    91 => absolute = false,
+                    _ => {}
+                },
+                'F' => feed = v * scale,
+                'P' if dwell_line => dwell = v,
+                'X' | 'Y' => {
+                    let k = if c == 'X' { 0 } else { 1 };
+                    target[k] = if absolute { v * scale } else { pos[k] + v * scale };
+                    moved = true;
+                }
+                _ => {}
+            }
+        }
+        let mut t = dwell;
+        if moved && !dwell_line {
+            let d = dist(pos, target);
+            let speed = if motion == 0 { rapid } else { (feed / 60.0).max(0.1) };
+            t += d / speed;
+            pos = target;
+        }
+        out.push(t);
+    }
+    out
+}
+
 pub fn dist(a: P2, b: P2) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
