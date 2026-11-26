@@ -280,32 +280,180 @@ fn pnc_wizard_window(app: &mut RayEtch, ctx: &egui::Context) {
 
 // ------------------------------------------------------------------ Impostazione rotazione
 
-/// The rotary attachment (saved with the device). Defaults from GantryRotaryPrefs (0x1005d78b0).
+/// The rotary attachment (saved with the device). Defaults from GantryRotaryPrefs (0x1005d78b0:
+/// 360 mm per turn, 50 mm object) and the original's window (picture 34: Mandrino, Y axis).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Rotary {
+    /// "Abilita rotazione"
     pub enabled: bool,
-    /// false: rulli, true: mandrino
+    /// "Tipo rotazione": true Mandrino, false Rullo
     pub chuck: bool,
-    /// Y travel that turns the rotary once, mm
+    /// "Uscita specchio verso l'unità rotante": the rotary turns the other way
+    pub mirror: bool,
+    /// "Asse rotazione": 0 Y, 1 Z, 2 A
+    pub axis: u8,
+    /// travel of the rotary axis that turns it once, mm
     pub mm_per_rotation: f64,
-    pub roller_diameter: f64,
     pub object_diameter: f64,
 }
 
 impl Default for Rotary {
     fn default() -> Self {
-        Rotary { enabled: false, chuck: false, mm_per_rotation: 360.0, roller_diameter: 50.0, object_diameter: 50.0 }
+        Rotary { enabled: false, chuck: true, mirror: false, axis: 0, mm_per_rotation: 360.0, object_diameter: 50.0 }
     }
 }
 
 impl Rotary {
-    /// How much a design millimetre along Y becomes on the Y axis: one turn moves the surface by
-    /// π × the diameter that touches it (the roller's on rollers, the object's in a chuck).
+    /// How much a design millimetre along Y becomes on the rotary axis. In a chuck one turn
+    /// carries the surface by π × the object's diameter; on rollers the original needs no values
+    /// ("For a roller rotary the values below are not required"): 1:1. Negative when mirrored.
     pub fn y_scale(&self) -> f64 {
-        let d = if self.chuck { self.object_diameter } else { self.roller_diameter };
-        if d <= 0.0 { 1.0 } else { self.mm_per_rotation / (std::f64::consts::PI * d) }
+        let k = if self.chuck && self.object_diameter > 0.0 { self.mm_per_rotation / (std::f64::consts::PI * self.object_diameter) } else { 1.0 };
+        if self.mirror { -k } else { k }
     }
+
+    /// The G-code letter the rotary turns with.
+    pub fn letter(&self) -> char {
+        match self.axis {
+            1 => 'Z',
+            2 => 'A',
+            _ => 'Y',
+        }
+    }
+}
+
+/// Move the Y words of motion lines onto the rotary's axis (Z or A); comments stay as they are.
+pub fn remap_axis(line: &str, letter: char) -> String {
+    if letter == 'Y' || line.trim_start().starts_with(';') || line.trim_start().starts_with('$') {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut prev_space = true;
+    for c in line.chars() {
+        if prev_space && (c == 'Y' || c == 'y') {
+            out.push(letter);
+        } else {
+            out.push(c);
+        }
+        prev_space = c == ' ' || c.is_ascii_digit() || c == '.';
+        if c.is_ascii_alphabetic() {
+            prev_space = false;
+        }
+    }
+    out
+}
+
+impl RayEtch {
+    /// Job G-code with the rotary's axis letter when it isn't Y.
+    pub fn rotary_axis_text(&self, g: String) -> String {
+        let r = &self.doc.device.rotary;
+        if !r.enabled || r.letter() == 'Y' {
+            return g;
+        }
+        g.lines().map(|l| remap_axis(l, r.letter())).collect::<Vec<_>>().join("\n") + "\n"
+    }
+
+    pub fn rotary_axis_lines(&self, v: Vec<String>) -> Vec<String> {
+        let r = &self.doc.device.rotary;
+        if !r.enabled || r.letter() == 'Y' {
+            return v;
+        }
+        v.iter().map(|l| remap_axis(l, r.letter())).collect()
+    }
+}
+
+/// The picture beside "Tipo rotazione": a line drawing of a chuck or a roller rotary, like the
+/// original's ChuckRotary.png / roller picture.
+fn rotary_picture(ui: &mut egui::Ui, chuck: bool, size: egui::Vec2) {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let ink = crate::theme::p().text;
+    let fill = crate::theme::p().field;
+    let stroke = egui::Stroke::new(1.2, ink);
+    // the rotary's axis runs up to the right, the plate comes toward the viewer (picture 34)
+    let s = size.x / 17.0;
+    let (c30, s30) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+    let o = egui::pos2(rect.left() + 4.0, rect.top() + 9.6 * s);
+    let p = |x: f32, y: f32, z: f32| egui::pos2(o.x + (x + y) * c30 * s, o.y + (y - x) * s30 * s - z * s);
+    // a box from its two corners: its top, its face toward the viewer and its left end
+    let block = |a: [f32; 3], b: [f32; 3]| {
+        let top = vec![p(a[0], a[1], b[2]), p(b[0], a[1], b[2]), p(b[0], b[1], b[2]), p(a[0], b[1], b[2])];
+        let front = vec![p(a[0], b[1], a[2]), p(b[0], b[1], a[2]), p(b[0], b[1], b[2]), p(a[0], b[1], b[2])];
+        let side = vec![p(a[0], a[1], a[2]), p(a[0], b[1], a[2]), p(a[0], b[1], b[2]), p(a[0], a[1], b[2])];
+        for poly in [top, front, side] {
+            painter.add(egui::Shape::convex_polygon(poly, fill, stroke));
+        }
+    };
+    // a cylinder along X, from x0 to x1, axis at (y, z), radius r: silhouette, then the near end
+    let cylinder = |x0: f32, x1: f32, y: f32, z: f32, r: f32| {
+        let ring = |x: f32| -> Vec<egui::Pos2> {
+            (0..48).map(|i| {
+                let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                p(x, y + r * a.cos(), z + r * a.sin())
+            }).collect()
+        };
+        let (far, near) = (ring(x1), ring(x0));
+        let mut hull: Vec<egui::Pos2> = far.iter().chain(near.iter()).copied().collect();
+        hull = convex_hull(hull);
+        painter.add(egui::Shape::convex_polygon(hull, fill, stroke));
+        painter.add(egui::Shape::convex_polygon(near, fill, stroke));
+    };
+    // base plate
+    block([0.0, 0.0, 0.0], [12.0, 4.0, 0.25]);
+    if chuck {
+        // chuck at the far end, the object, the tailstock cone near
+        block([10.8, 0.6, 0.25], [11.6, 3.4, 3.4]);
+        cylinder(10.2, 10.8, 2.0, 2.2, 1.6);
+        cylinder(2.4, 10.2, 2.0, 2.2, 1.1);
+        block([1.2, 1.3, 0.25], [2.0, 2.7, 2.4]);
+        cylinder(2.0, 2.4, 2.0, 2.2, 0.35);
+    } else {
+        // two rollers in their end blocks, the object lying on them
+        block([10.8, 0.4, 0.25], [11.4, 3.6, 1.4]);
+        cylinder(1.4, 10.8, 1.1, 0.9, 0.45);
+        cylinder(1.4, 10.8, 2.9, 0.9, 0.45);
+        cylinder(2.0, 10.2, 2.0, 2.3, 1.1);
+        block([0.8, 0.4, 0.25], [1.4, 3.6, 1.4]);
+    }
+}
+
+fn convex_hull(mut pts: Vec<egui::Pos2>) -> Vec<egui::Pos2> {
+    pts.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let cross = |o: egui::Pos2, a: egui::Pos2, b: egui::Pos2| (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    let mut lower: Vec<egui::Pos2> = Vec::new();
+    for &q in &pts {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], q) <= 0.0 {
+            lower.pop();
+        }
+        lower.push(q);
+    }
+    let mut upper: Vec<egui::Pos2> = Vec::new();
+    for &q in pts.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], q) <= 0.0 {
+            upper.pop();
+        }
+        upper.push(q);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
+/// A framed group with its title above, like the original's Qt group boxes.
+fn group<R>(ui: &mut egui::Ui, title: &str, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.label(title);
+    egui::Frame::new()
+        .fill(crate::theme::p().panel)
+        .stroke(egui::Stroke::new(1.0, crate::theme::p().line))
+        .corner_radius(3)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            add(ui)
+        })
+        .inner
 }
 
 fn rotary_window(app: &mut RayEtch, ctx: &egui::Context) {
@@ -313,46 +461,75 @@ fn rotary_window(app: &mut RayEtch, ctx: &egui::Context) {
     let mut open = true;
     let mut act: Option<&str> = None;
     crate::theme::centered(ctx, "rotary", egui::Window::new(tr("Impostazione rotazione")).open(&mut open).resizable(false).collapsible(false)).show(ctx, |ui| {
-        ui.checkbox(&mut r.enabled, tr("Abilita unità rotante"));
-        ui.add_space(6.0);
-        egui::Grid::new("rotary").num_columns(2).spacing(egui::vec2(10.0, 6.0)).show(ui, |ui| {
-            ui.label(tr("Tipo di unità rotante"));
+        ui.spacing_mut().item_spacing.y = 6.0;
+        group(ui, tr("Tipo rotazione"), 540.0, |ui| {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut r.chuck, false, tr("Rulli"));
-                ui.radio_value(&mut r.chuck, true, tr("Mandrino"));
+                ui.vertical(|ui| {
+                    ui.set_width(250.0);
+                    ui.add_space(10.0);
+                    ui.radio_value(&mut r.chuck, true, tr("Mandrino"));
+                    ui.add_space(18.0);
+                    ui.radio_value(&mut r.chuck, false, tr("Rullo"));
+                    ui.add_space(18.0);
+                    crate::panels::switch(ui, &mut r.enabled, tr("Abilita rotazione"));
+                    ui.add_space(18.0);
+                    crate::panels::switch(ui, &mut r.mirror, tr("Uscita specchio verso l'unità rotante"));
+                });
+                rotary_picture(ui, r.chuck, egui::vec2(280.0, 190.0));
             });
-            ui.end_row();
-            ui.label(tr("Asse rotante"));
-            ui.label("Y");
-            ui.end_row();
-            ui.label(tr("mm per rotazione"));
-            ui.add(crate::i18n::dv(&mut r.mm_per_rotation).speed(1.0).range(0.1..=100000.0).max_decimals(3));
-            ui.end_row();
-            ui.add_enabled(!r.chuck, egui::Label::new(tr("Diametro rullo")));
-            ui.add_enabled(!r.chuck, crate::i18n::dv(&mut r.roller_diameter).speed(0.1).range(0.1..=10000.0).max_decimals(3).suffix(" mm"));
-            ui.end_row();
-            ui.label(tr("Diametro oggetto"));
-            ui.add(crate::i18n::dv(&mut r.object_diameter).speed(0.1).range(0.1..=10000.0).max_decimals(3).suffix(" mm"));
-            ui.end_row();
-            ui.label(tr("Circonferenza"));
-            ui.label(format!("{:.2} mm", std::f64::consts::PI * r.object_diameter));
-            ui.end_row();
         });
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new(trf("Ogni mm del disegno lungo Y diventa {} mm sull'asse Y.", &[&format!("{:.4}", r.y_scale())])).color(crate::theme::p().text_dim));
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.add_enabled(app.connected.is_some(), egui::Button::new(tr("Prova rotazione"))).on_hover_text(tr("Fa fare un giro completo all'unità rotante")).clicked() {
-                act = Some("test");
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(tr("OK")).clicked() {
-                    act = Some("ok");
-                }
-                if ui.button(crate::i18n::cancel()).clicked() {
-                    act = Some("cancel");
+        ui.add_space(6.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                group(ui, tr("Asse rotazione"), 190.0, |ui| {
+                    for (v, l) in [(0u8, tr("Y Asse")), (1, tr("Z Asse")), (2, tr("A Asse"))] {
+                        ui.radio_value(&mut r.axis, v, l);
+                    }
+                });
+                if ui
+                    .add_enabled(app.connected.is_some(), egui::Button::new(tr("Prova")).min_size(egui::vec2(212.0, 26.0)))
+                    .on_hover_text(tr("Se i mm per rotazione sono giusti, l'oggetto fa un giro completo di 360°, si ferma, poi torna al punto di partenza."))
+                    .clicked()
+                {
+                    act = Some("test");
                 }
             });
+            ui.add_space(30.0);
+            ui.vertical(|ui| {
+                ui.add_space(14.0);
+                if !r.chuck {
+                    ui.label(egui::RichText::new(tr("Per un'unità a rulli i valori qui sotto non sono necessari.")).color(crate::theme::p().text_dim));
+                }
+                ui.add_enabled_ui(r.chuck, |ui| {
+                    egui::Grid::new("rotary_values").num_columns(3).spacing(egui::vec2(10.0, 12.0)).show(ui, |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(tr("mm per rotazione")));
+                        ui.add_sized([150.0, 24.0], crate::i18n::dv(&mut r.mm_per_rotation).speed(1.0).range(0.1..=100000.0).fixed_decimals(2));
+                        ui.label("");
+                        ui.end_row();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(tr("Diametro oggetto")));
+                        ui.add_sized([150.0, 24.0], crate::i18n::dv(&mut r.object_diameter).speed(0.1).range(0.01..=10000.0).fixed_decimals(3));
+                        ui.label("mm");
+                        ui.end_row();
+                        // the circumference is the diameter's other face: editing it sets the diameter
+                        let mut c = std::f64::consts::PI * r.object_diameter;
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(tr("Circonferenza")));
+                        if ui.add_sized([150.0, 24.0], crate::i18n::dv(&mut c).speed(0.3).range(0.03..=31416.0).fixed_decimals(3)).changed() {
+                            r.object_diameter = c / std::f64::consts::PI;
+                        }
+                        ui.label("mm");
+                        ui.end_row();
+                    });
+                });
+            });
+        });
+        ui.add_space(8.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.add(egui::Button::new(tr("OK")).min_size(egui::vec2(90.0, 26.0))).clicked() {
+                act = Some("ok");
+            }
+            if ui.add(egui::Button::new(crate::i18n::cancel()).min_size(egui::vec2(90.0, 26.0))).clicked() {
+                act = Some("cancel");
+            }
         });
     });
     match act {
@@ -367,9 +544,9 @@ fn rotary_window(app: &mut RayEtch, ctx: &egui::Context) {
         }
         Some("cancel") => {}
         Some("test") => {
-            // one full turn forward at the jog speed, in relative moves
-            let f = app.jog_speed;
-            app.send_lines(vec!["G91".into(), format!("G1 Y{:.3} F{:.0}", r.mm_per_rotation, f), "G90".into()]);
+            // "the table will rotate a full 360 degrees, pause, then rotate back to the starting point"
+            let (f, a, d) = (app.jog_speed, r.letter(), r.mm_per_rotation);
+            app.send_lines(vec!["G91".into(), format!("G1 {a}{d:.3} F{f:.0}"), "G4 P1".into(), format!("G1 {a}{:.3} F{f:.0}", -d), "G90".into()]);
             app.rotary_dialog = Some(r);
         }
         _ if open => app.rotary_dialog = Some(r),

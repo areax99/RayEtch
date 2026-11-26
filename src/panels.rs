@@ -489,6 +489,7 @@ pub fn menu_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 let rows = crate::lasertools::rows(&|id| app.can(id));
                 file_rows(app, ui, rows);
             });
+            ui.menu_button(tr("Strumenti Web"), |ui| file_rows(app, ui, crate::webtools::rows()));
             ui.menu_button(tr("Finestra"), |ui| {
                 if ui.button(tr("Adatta alla pagina")).clicked() {
                     app.view.fit_pending = true;
@@ -3406,6 +3407,8 @@ pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
     crate::toolsmenu::slot_window(app, ctx);
     crate::organize::windows(app, ctx);
     crate::lasertools::windows(app, ctx);
+    crate::webtools::manage_window(app, ctx);
+    crate::webtools::pump(app, ctx);
     undo_history_window(app, ctx);
     crate::barcode::window(app, ctx);
     if app.lib_edit.is_some() {

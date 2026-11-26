@@ -232,6 +232,12 @@ pub struct RayEtch {
     pub rotary_dialog: Option<crate::lasertools::Rotary>,
     pub taper_dialog: Option<crate::lasertools::TaperDialog>,
     pub cameras: Option<crate::lasertools::Cameras>,
+    /// Strumenti Web › Gestisci strumenti utente: the list being edited
+    pub web_tools_edit: Option<(Vec<crate::webtools::UserTool>, Option<usize>)>,
+    /// a web tool waiting for its third-party notice to be accepted
+    pub web_notice: Option<crate::webview::Spec>,
+    /// to wake the window when a tool window downloads something
+    pub repaint_ctx: Option<egui::Context>,
     pub current_layer: usize,
     pub selected_row: Option<usize>,
     /// The canvas selection the layer list last followed: when it changes, the row of the last
@@ -611,6 +617,9 @@ impl RayEtch {
             rotary_dialog: None,
             taper_dialog: None,
             cameras: None,
+            web_tools_edit: None,
+            web_notice: None,
+            repaint_ctx: None,
             current_layer: 0,
             selected_row: None,
             row_follows: Vec::new(),
@@ -1127,7 +1136,7 @@ impl RayEtch {
 
     pub fn job_gcode(&self) -> (Job, String) {
         let job = self.plan_job();
-        let g = gcode::write_gcode(&self.doc, &job, &self.output_opts());
+        let g = self.rotary_axis_text(gcode::write_gcode(&self.doc, &job, &self.output_opts()));
         (job, g)
     }
 
@@ -1283,7 +1292,7 @@ impl RayEtch {
             self.status = tr("Niente da inquadrare.").into();
             return;
         }
-        let lines = gcode::frame_gcode(&self.doc, &job, &self.output_opts(), self.jog_speed, &self.frame_power());
+        let lines = self.rotary_axis_lines(gcode::frame_gcode(&self.doc, &job, &self.output_opts(), self.jog_speed, &self.frame_power()));
         self.send_lines(lines);
     }
 

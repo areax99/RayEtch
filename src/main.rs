@@ -11,6 +11,8 @@ mod filemenu;
 mod toolsmenu;
 mod organize;
 mod lasertools;
+mod webtools;
+mod webview;
 mod canvas;
 mod combine;
 mod device_ui;
@@ -45,6 +47,11 @@ fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let mut screenshot = None;
     let mut open_file = None;
+    // a web tool's own window (Strumenti Web), started by the main window
+    if args.len() > 2 && args[1] == "--webtool" {
+        webview::run(&args[2]);
+        return Ok(());
+    }
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--screenshot" && i + 1 < args.len() {

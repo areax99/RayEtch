@@ -244,6 +244,10 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
     }
     add_keyed(&laser, crate::lasertools::rows(&|_| true))?;
 
+    // the original's Strumenti Web menu (reference picture 33)
+    let web = Submenu::new(tr("Strumenti Web"), true);
+    add_rows(&web, crate::webtools::rows())?;
+
     let window = Submenu::with_items(
         tr("Finestra"),
         true,
@@ -267,7 +271,7 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
 
     let help = Submenu::with_items(tr("Guida"), true, &[&item("updates", tr("Aggiornamenti…"), None), &item("about", tr("Informazioni su RayEtch"), None)]).ok()?;
 
-    menu.append_items(&[&app_menu, &file, &edit, &tools, &arrange, &laser, &window, &help]).ok()?;
+    menu.append_items(&[&app_menu, &file, &edit, &tools, &arrange, &laser, &web, &window, &help]).ok()?;
     #[cfg(target_os = "macos")]
     {
         menu.init_for_nsapp();
@@ -312,6 +316,9 @@ pub fn run(app: &mut RayEtch, ctx: &egui::Context, id: &str) {
                 app.shape_tool = *t;
             }
             ctx.request_repaint();
+            return;
+        }
+        if crate::webtools::run(app, id) {
             return;
         }
         match id {

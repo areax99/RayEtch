@@ -1,6 +1,6 @@
 [package]
 name = "rayetch"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 description = "RayEtch - free laser design and control software"
 license = "Apache-2.0"
 edition = "2024"
@@ -30,6 +30,10 @@ raw-window-handle = "0.6"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSData"] }
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSImage"] }
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+tao = "0.34"
+wry = "0.53"
 
 [profile.dev]
 opt-level = 1
