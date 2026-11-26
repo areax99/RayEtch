@@ -7,7 +7,9 @@
 /MECHANICS.md
 /mechanics.json
 /shots/
+/tools/
 /tools/ocr.swift
+/tools/bug-relay/
 /tools/bug-relay/*
 /app/
 /scripts/package-local.sh
