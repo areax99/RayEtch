@@ -510,8 +510,15 @@ pub fn menu_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 if ui.button(tr("Reimposta disposizione predefinita")).clicked() {
                     app.reset_layout = true;
                 }
+                ui.separator();
+                let theme = app.prefs.theme;
+                ui.menu_button(tr("Tema"), |ui| file_rows(app, ui, crate::filemenu::theme_rows(theme)));
+                if ui.button(tr("Impostazioni")).clicked() {
+                    ui.close();
+                    app.show_settings = true;
+                }
             });
-            ui.menu_button(tr("Aiuto"), |ui| {
+            ui.menu_button(tr("Guida"), |ui| {
                 if ui.button(tr("Aggiornamenti…")).clicked() {
                     let ctx = ui.ctx().clone();
                     crate::sysmenu::run(app, &ctx, "updates");

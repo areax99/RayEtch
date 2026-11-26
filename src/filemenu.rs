@@ -454,3 +454,27 @@ mod tests {
         assert!(pdf.ends_with("%%EOF\n"));
     }
 }
+
+/// The Lingua menu (the original's, between Finestra and Guida, picture 33): following the
+/// system, then each language; a tick on the one in use.
+#[allow(dead_code)]
+pub fn language_rows() -> Vec<FileRow> {
+    let cur = crate::i18n::load_choice();
+    let mark = |on: bool, l: &str| if on { format!("✓ {l}") } else { format!("    {l}") };
+    let mut v = vec![FileRow::Item("lang_auto".into(), mark(cur.is_none(), crate::i18n::tr("Automatica (lingua di sistema)")), "", true), FileRow::Sep];
+    for l in crate::i18n::ALL {
+        v.push(FileRow::Item(format!("lang_{}", l.code()), mark(cur == Some(l), l.native_name()), "", true));
+    }
+    v
+}
+
+/// Finestra › Tema: the same choice as Impostazioni › Tema dell'applicazione.
+pub fn theme_rows(cur: crate::prefs::AppTheme) -> Vec<FileRow> {
+    use crate::prefs::AppTheme;
+    let mark = |on: bool, l: &str| if on { format!("✓ {l}") } else { format!("    {l}") };
+    vec![
+        FileRow::Item("theme_system".into(), mark(cur == AppTheme::System, crate::i18n::tr("Tema di sistema")), "", true),
+        FileRow::Item("theme_light".into(), mark(cur == AppTheme::Light, crate::i18n::tr("Chiaro")), "", true),
+        FileRow::Item("theme_dark".into(), mark(cur == AppTheme::Dark, crate::i18n::tr("Scuro")), "", true),
+    ]
+}

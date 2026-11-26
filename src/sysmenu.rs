@@ -248,6 +248,8 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
     let web = Submenu::new(tr("Strumenti Web"), true);
     add_rows(&web, crate::webtools::rows())?;
 
+    let theme_menu = Submenu::new(tr("Tema"), true);
+    add_rows(&theme_menu, crate::filemenu::theme_rows(crate::prefs::with(|p| p.theme)))?;
     let window = Submenu::with_items(
         tr("Finestra"),
         true,
@@ -262,6 +264,9 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
             &item("tab_shape", tr("Proprietà forma"), None),
             &sep(),
             &item("reset_layout", tr("Reimposta disposizione predefinita"), None),
+            &sep(),
+            &theme_menu,
+            &item("settings_win", tr("Impostazioni"), None),
             &sep(),
             &PredefinedMenuItem::minimize(Some(tr("Riduci a icona"))),
             &PredefinedMenuItem::fullscreen(Some(tr("Schermo intero"))),
@@ -496,6 +501,22 @@ pub fn run(app: &mut RayEtch, ctx: &egui::Context, id: &str) {
             }
             "settings" => app.show_settings = true,
             "lang_auto" => app.set_language(None, ctx),
+            "settings_win" => app.show_settings = true,
+            "theme_system" | "theme_light" | "theme_dark" => {
+                use crate::prefs::AppTheme;
+                let mut p = app.prefs.clone();
+                p.theme = match id {
+                    "theme_light" => AppTheme::Light,
+                    "theme_dark" => AppTheme::Dark,
+                    _ => AppTheme::System,
+                };
+                if p.theme != AppTheme::System {
+                    p.dark_background = p.theme == AppTheme::Dark;
+                }
+                app.apply_prefs(p, ctx);
+                app.prefs.save();
+                app.menu_dirty = true;
+            }
             other if other.starts_with("lang_") => {
                 app.set_language(crate::i18n::Lang::from_code(&other[5..]), ctx);
             }
