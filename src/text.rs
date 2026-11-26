@@ -198,16 +198,27 @@ pub fn glyphs(text: &str, size: f64, font_name: &str) -> Vec<(f64, f64, Vec<Poly
     out
 }
 
-pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
+/// The letters laid out from the first line's baseline (not yet centred), with where each
+/// caret position sits on its line: (x, line), plus the line height, ascender and descender.
+struct Laid {
+    paths: Vec<Polyline>,
+    carets: Vec<(f64, usize)>,
+    line_h: f64,
+    asc: f64,
+    desc: f64,
+}
+
+fn lay_out(text: &str, size: f64, font_name: &str) -> Option<Laid> {
     let list = fonts();
     let data = list.iter().find(|f| f.name == font_name).and_then(|f| f.data()).or_else(|| list[0].data());
-    let Some(data) = data else { return Vec::new() };
-    let Ok(face) = ttf_parser::Face::parse(&data, 0) else { return Vec::new() };
+    let data = data?;
+    let face = ttf_parser::Face::parse(&data, 0).ok()?;
     let upem = face.units_per_em() as f64;
     let scale = size / upem;
     let line_h = (face.ascender() as f64 - face.descender() as f64 + face.line_gap() as f64) * scale;
     let mut b = Builder { paths: Vec::new(), cur: Vec::new(), last: [0.0, 0.0], scale, ox: 0.0, oy: 0.0 };
     let rtl = crate::prefs::with(|p| p.right_to_left_text);
+    let mut carets = Vec::new();
     for (li, line) in text.split('\n').enumerate() {
         let mut x = 0.0;
         let y = -(li as f64) * line_h;
@@ -216,6 +227,7 @@ pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
         // right to left
         let chars: Vec<char> = if rtl && line.chars().any(is_rtl) { line.chars().rev().collect() } else { line.chars().collect() };
         for ch in chars {
+            carets.push((x, li));
             let Some(gid) = face.glyph_index(ch) else {
                 x += size * 0.5;
                 continue;
@@ -228,7 +240,56 @@ pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
             merge_glyph(&mut b.paths, first);
             x += face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale;
         }
+        // after the line's last letter (the newline's own position)
+        carets.push((x, li));
     }
+    Some(Laid { paths: b.paths, carets, line_h, asc: face.ascender() as f64 * scale, desc: face.descender() as f64 * scale })
+}
+
+/// The centre the outline is shifted by (so a text's origin is its middle).
+fn centre_of(paths: &[Polyline]) -> Option<P2> {
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for p in paths.iter().flat_map(|p| p.pts.iter()) {
+        min[0] = min[0].min(p[0]);
+        min[1] = min[1].min(p[1]);
+        max[0] = max[0].max(p[0]);
+        max[1] = max[1].max(p[1]);
+    }
+    min[0].is_finite().then(|| [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0])
+}
+
+/// Where the typing cursor stands before the `index`-th character, in the text's own (centred)
+/// coordinates: the bottom and top of a line from descender to ascender.
+pub fn caret_at(text: &str, size: f64, font_name: &str, index: usize) -> Option<(P2, P2)> {
+    let l = lay_out(text, size, font_name)?;
+    let c = centre_of(&l.paths).unwrap_or([0.0, 0.0]);
+    let (x, li) = *l.carets.get(index.min(l.carets.len().saturating_sub(1)))?;
+    let y = -(li as f64) * l.line_h;
+    Some(([x - c[0], y + l.desc - c[1]], [x - c[0], y + l.asc - c[1]]))
+}
+
+/// The caret position (character index) nearest a point in the text's own (centred)
+/// coordinates: its line first, then the nearest gap between letters on that line.
+pub fn caret_index_at(text: &str, size: f64, font_name: &str, p: P2) -> usize {
+    let Some(l) = lay_out(text, size, font_name) else { return text.chars().count() };
+    let c = centre_of(&l.paths).unwrap_or([0.0, 0.0]);
+    let (x, y) = (p[0] + c[0], p[1] + c[1]);
+    let lines = l.carets.last().map(|c| c.1 + 1).unwrap_or(1);
+    // line li runs from its descender to its ascender around baseline -li·line_h
+    let li = (((l.asc - y) / l.line_h).floor().max(0.0) as usize).min(lines - 1);
+    l.carets
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.1 == li)
+        .min_by(|a, b| (a.1.0 - x).abs().total_cmp(&(b.1.0 - x).abs()))
+        .map(|(i, _)| i)
+        .unwrap_or(text.chars().count())
+}
+
+pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
+    let Some(l) = lay_out(text, size, font_name) else { return Vec::new() };
+    let b = Builder { paths: l.paths, cur: Vec::new(), last: [0.0, 0.0], scale: 1.0, ox: 0.0, oy: 0.0 };
     // centre
     let mut min = [f64::INFINITY; 2];
     let mut max = [f64::NEG_INFINITY; 2];
@@ -246,4 +307,21 @@ pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
         .into_iter()
         .map(|pl| Polyline { pts: pl.pts.into_iter().map(|p| [p[0] - c[0], p[1] - c[1]]).collect(), closed: pl.closed })
         .collect()
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::*;
+
+    /// Clicking where the cursor would stand gives back that character, on every line.
+    #[test]
+    fn click_finds_the_caret_it_draws() {
+        let font = fonts()[0].name.clone();
+        let text = "Ciao\nmondo";
+        for i in 0..=text.chars().count() {
+            let (a, b) = caret_at(text, 25.0, &font, i).unwrap();
+            let mid = [a[0], (a[1] + b[1]) / 2.0];
+            assert_eq!(caret_index_at(text, 25.0, &font, mid), i, "caret {i}");
+        }
+    }
 }

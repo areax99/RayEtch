@@ -373,6 +373,13 @@ fn snap_point(app: &RayEtch, p: P2) -> P2 {
     p
 }
 
+/// The character a click on a text lands before (None when it isn't a text).
+fn caret_at_point(app: &RayEtch, id: u64, p: P2) -> Option<usize> {
+    let s = app.doc.find(id)?;
+    let Geometry::Text { text, size, font, .. } = &s.geom else { return None };
+    Some(crate::text::caret_index_at(text, *size, font, s.to_local(p)))
+}
+
 pub fn drag_box(start: P2, cur: P2, square: bool, centred: bool) -> (P2, P2) {
     let b = constrain_corner(start, cur, square);
     if centred {
@@ -751,10 +758,18 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                     // Modifica testo"
                     // a bar code opens its window (SelectionTool::DoubleClick → on_actionEdit_BarCode_triggered)
                     if crate::barcode::edit(app, app.selection[0]) {
-                    } else if app.prefs.double_click_edits_text {
+                    } else {
+                        // a text is edited where it is: with "Fare doppio clic… finestra Modifica testo"
+                        // in its window, otherwise in the toolbar's Testo box (the original edits it
+                        // in place on the canvas)
                         let id = app.selection[0];
                         if let Some(Geometry::Text { text, .. }) = app.doc.shapes.iter().find(|s| s.id == id).map(|s| &s.geom) {
-                            app.text_edit = Some((id, text.clone()));
+                            if app.prefs.double_click_edits_text {
+                                app.text_edit = Some((id, text.clone()));
+                            } else {
+                                app.focus_text_box = true;
+                                app.focus_text_at = cursor.and_then(|p| caret_at_point(app, id, p));
+                            }
                         }
                     }
                 }
@@ -840,7 +855,15 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
         }
         Tool::Text => {
             if resp.clicked() {
-                if let Some(p) = cursor {
+                // clicking an existing text with the Text tool edits it instead of making a new one
+                let on_text = cursor.and_then(|p| hit_test(app, p, tol)).filter(|id| matches!(app.doc.find(*id).map(|s| &s.geom), Some(Geometry::Text { .. })));
+                if let Some(id) = on_text {
+                    app.selection = vec![id];
+                    app.tool = Tool::Select;
+                    app.focus_text_box = true;
+                    // the cursor goes where the text was clicked
+                    app.focus_text_at = cursor.and_then(|p| caret_at_point(app, id, p));
+                } else if let Some(p) = cursor {
                     let id = app.make_text_shape(p);
                     app.selection = vec![id];
                     app.tool = Tool::Select;
@@ -1003,6 +1026,20 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
     }
     painter.rect_stroke(ws, 0.0, Stroke::new(1.0, Color32::from_rgb(90, 96, 108)), StrokeKind::Outside);
     // "Mostra la croce al centro dell'area di lavoro"
+    // the typing cursor of a text being edited (in the toolbar's Testo box), drawn in the text
+    // itself so it reads as editing on the canvas, as the original does; it blinks every half second
+    if let Some((id, index)) = app.text_caret
+        && let Some(s) = app.doc.find(id)
+        && let Geometry::Text { text, size, font, .. } = &s.geom
+        && let Some((a, b)) = crate::text::caret_at(text, *size, font, index)
+    {
+        let on = (ctx.input(|i| i.time) * 2.0) as i64 % 2 == 0;
+        if on {
+            let (pa, pb) = (xf.to_screen(s.to_world(a)), xf.to_screen(s.to_world(b)));
+            painter.line_segment([pa, pb], Stroke::new(2.0, crate::theme::ACCENT));
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
     if app.prefs.show_center_cross {
         let c = ws.center();
         let st = Stroke::new(1.0, Color32::from_rgb(220, 60, 60));

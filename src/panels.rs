@@ -1121,7 +1121,34 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
             });
             nb_grid("textopts2").show(ui, |ui| {
                 nb_label(ui, tr("Testo"));
-                changed |= ui.add_sized(vec2(150.0, NB_ROW), egui::TextEdit::singleline(&mut app.new_text).align(egui::Align2::LEFT_CENTER)).changed();
+                let out = egui::TextEdit::singleline(&mut app.new_text).align(egui::Align2::LEFT_CENTER).desired_width(150.0).min_size(vec2(150.0, NB_ROW)).show(ui);
+                changed |= out.response.changed();
+                // typing in here edits the selected text on the canvas, where a cursor shows the spot
+                app.text_caret = match (sel_text, out.response.has_focus(), out.cursor_range) {
+                    (Some(id), true, Some(r)) => Some((id, r.primary.index.into())),
+                    _ => None,
+                };
+                // a text picked for editing on the canvas: the cursor goes in here with all of it selected
+                if std::mem::take(&mut app.focus_text_box) {
+                    // the box shows the picked text before it's selected for typing over
+                    if let Some(id) = sel_text
+                        && let Some(Geometry::Text { text, size, font, .. }) = app.doc.find(id).map(|s| &s.geom)
+                    {
+                        app.new_text = text.clone();
+                        app.text_size = *size;
+                        app.text_font = font.clone();
+                    }
+                    out.response.request_focus();
+                    let mut st = out.state;
+                    let n = app.new_text.chars().count();
+                    let range = match app.focus_text_at.take() {
+                        // clicked on the canvas: the cursor at that spot
+                        Some(i) => egui::text::CCursorRange::one(egui::text::CCursor::new(i.min(n))),
+                        None => egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n)),
+                    };
+                    st.cursor.set_char_range(Some(range));
+                    st.store(ui.ctx(), out.response.id);
+                }
                 ui.end_row();
                 nb_label(ui, tr("Lati"));
                 nb_field(ui, 60.0, crate::i18n::dv(&mut app.polygon_sides).range(3..=64)).on_hover_text(tr("Lati del poligono"));

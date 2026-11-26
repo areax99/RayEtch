@@ -312,6 +312,12 @@ pub struct RayEtch {
     /// Amount the Ruota box turns the selection by (QNumEdit_ValueChanged 0x100c53f38).
     pub rot_input: f64,
     pub rot_for: Vec<u64>,
+    /// put the cursor in the toolbar's Testo box, all of it selected (editing a text on the canvas)
+    pub focus_text_box: bool,
+    /// while the Testo box is being typed in: the text shape and the cursor's character, shown on the canvas
+    pub text_caret: Option<(u64, usize)>,
+    /// where the cursor goes when the Testo box takes it: the clicked spot, or None for all the text selected
+    pub focus_text_at: Option<usize>,
     /// Width/height scale boxes in % (QXY_ValueChanged 0x100c540e0: factor = value / 100).
     pub scale_pct: [f64; 2],
     pub status: String,
@@ -673,6 +679,9 @@ impl RayEtch {
             lock_ratio: false,
             rot_input: 0.0,
             rot_for: Vec::new(),
+            focus_text_box: false,
+            text_caret: None,
+            focus_text_at: None,
             scale_pct: [100.0, 100.0],
             status: tr("Pronto").into(),
             screenshot: screenshot.map(|path| ScreenshotState { path, frames: 0, requested: false, image: Arc::new(Mutex::new(None)) }),
@@ -2200,6 +2209,19 @@ pub fn scripted_input() -> Vec<(u32, egui::Event)> {
     for step in script.split(';').filter(|s| !s.trim().is_empty()) {
         let parts: Vec<&str> = step.trim().split(':').collect();
         let (Some(f), Some(kind), Some(nums)) = (parts.first().and_then(|f| f.parse::<u32>().ok()), parts.get(1), parts.get(2)) else { continue };
+        // "frame:type:text" types text; "frame:key:Enter" (or Backspace, Escape, A…) presses a key
+        if *kind == "type" {
+            out.push((f, egui::Event::Text(nums.to_string())));
+            continue;
+        }
+        if *kind == "key" {
+            if let Some(k) = egui::Key::from_name(nums) {
+                for (d, pressed) in [(0, true), (1, false)] {
+                    out.push((f + d, egui::Event::Key { key: k, physical_key: None, pressed, repeat: false, modifiers: Default::default() }));
+                }
+            }
+            continue;
+        }
         let n: Vec<f32> = nums.split(',').filter_map(|v| v.trim().parse().ok()).collect();
         match (*kind, n.as_slice()) {
             ("click", [x, y]) => {

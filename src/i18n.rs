@@ -1547,6 +1547,46 @@ static ROWS: &[(&str, [&str; 4])] = &[
     ("Tema dell'applicazione", ["Application theme", "Tema de la aplicación", "Anwendungsdesign", "Thème de l'application"]),
     ("Uscita specchio verso l'unità rotante", ["Mirror output to rotary", "Salida en espejo hacia el rotativo", "Ausgabe zur Drehachse spiegeln", "Sortie en miroir vers le rotatif"]),
     ("Velocità d'angolo minima:", ["Minimum corner speed:", "Velocidad mínima en esquinas:", "Minimale Eckengeschwindigkeit:", "Vitesse minimale dans les angles :"]),
+    // names kept in lists (settings tabs, slider levels, units, laser sources, bar code options)
+    ("Alta", ["High", "Alta", "Hoch", "Haute"]),
+    ("Altre impostazioni", ["Other settings", "Otros ajustes", "Weitere Einstellungen", "Autres réglages"]),
+    ("Bassa", ["Low", "Baja", "Niedrig", "Basse"]),
+    ("Blu + Fibra", ["Blue + Fiber", "Azul + Fibra", "Blau + Faser", "Bleu + Fibre"]),
+    ("Blu + IR", ["Blue + IR", "Azul + IR", "Blau + IR", "Bleu + IR"]),
+    ("Blu + MOPA", ["Blue + MOPA", "Azul + MOPA", "Blau + MOPA", "Bleu + MOPA"]),
+    ("Centimetri", ["Centimeters", "Centímetros", "Zentimeter", "Centimètres"]),
+    ("Data/Ora", ["Date/Time", "Fecha/Hora", "Datum/Uhrzeit", "Date/Heure"]),
+    ("Dati", ["Data", "Datos", "Daten", "Données"]),
+    ("Default", ["Default", "Predeterminado", "Standard", "Par défaut"]),
+    ("Dimensioni / Unità", ["Dimensions / Units", "Dimensiones / Unidades", "Abmessungen / Einheiten", "Dimensions / Unités"]),
+    ("Diodo blu", ["Blue diode", "Diodo azul", "Blaue Diode", "Diode bleue"]),
+    ("Enorme", ["Huge", "Enorme", "Riesig", "Énorme"]),
+    ("Estensioni", ["Extensions", "Extensiones", "Erweiterungen", "Extensions"]),
+    ("Fotocamera", ["Camera", "Cámara", "Kamera", "Caméra"]),
+    ("GS1", ["GS1", "GS1", "GS1", "GS1"]),
+    ("Grande", ["Large", "Grande", "Groß", "Grande"]),
+    ("Importa/Esporta", ["Import/Export", "Importar/Exportar", "Import/Export", "Importer/Exporter"]),
+    ("Impostazioni di base", ["Basic settings", "Ajustes básicos", "Grundeinstellungen", "Réglages de base"]),
+    ("Laser CO2", ["CO2 laser", "Láser CO2", "CO2-Laser", "Laser CO2"]),
+    ("Laser CO2 + IR", ["CO2 + IR laser", "Láser CO2 + IR", "CO2- + IR-Laser", "Laser CO2 + IR"]),
+    ("Laser MOPA", ["MOPA laser", "Láser MOPA", "MOPA-Laser", "Laser MOPA"]),
+    ("Laser UV", ["UV laser", "Láser UV", "UV-Laser", "Laser UV"]),
+    ("Laser a diodo", ["Diode laser", "Láser de diodo", "Diodenlaser", "Laser à diode"]),
+    ("Massima", ["Maximum", "Máxima", "Maximal", "Maximale"]),
+    ("Media", ["Medium", "Media", "Mittel", "Moyenne"]),
+    ("Metri", ["Meters", "Metros", "Meter", "Mètres"]),
+    ("Micron", ["Microns", "Micras", "Mikrometer", "Microns"]),
+    ("Molto grande", ["Very large", "Muy grande", "Sehr groß", "Très grande"]),
+    ("Normale", ["Normal", "Normal", "Normal", "Normale"]),
+    ("Numero di serie", ["Serial number", "Número de serie", "Seriennummer", "Numéro de série"]),
+    ("Piccola", ["Small", "Pequeña", "Klein", "Petite"]),
+    ("Piedi", ["Feet", "Pies", "Fuß", "Pieds"]),
+    ("Più grande", ["Larger", "Más grande", "Größer", "Plus grande"]),
+    ("Schermo", ["Display", "Pantalla", "Anzeige", "Affichage"]),
+    ("Sconosciuto", ["Unknown", "Desconocido", "Unbekannt", "Inconnu"]),
+    ("Unicode", ["Unicode", "Unicode", "Unicode", "Unicode"]),
+    ("Unione/CSV", ["Merge/CSV", "Combinación/CSV", "Zusammenführen/CSV", "Fusion/CSV"]),
+    ("Unità e Griglie", ["Units and Grids", "Unidades y cuadrículas", "Einheiten und Raster", "Unités et grilles"]),
 ];
 
 #[cfg(test)]
@@ -1604,6 +1644,29 @@ mod tests {
                     checked += 1;
                     if !keys.contains(text.as_str()) {
                         missing.insert(format!("{}: {}", f.file_name().unwrap().to_string_lossy(), raw));
+                    }
+                }
+            }
+        }
+        // names kept in lists and translated where they're shown
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for (file, from, to) in [
+            ("settings_ui.rs", "const TABS", "\n"),
+            ("device_ui.rs", "const TABS", "\n"),
+            ("settings_ui.rs", "let sizes =", "// two sliders"),
+            ("settings_ui.rs", "let units = [", "for (a, al"),
+            ("model.rs", "LASER_SOURCES", "];"),
+            ("vartext.rs", "EVAL_TYPES", "];"),
+        ] {
+            let s = std::fs::read_to_string(src.join(file)).unwrap();
+            let Some(i) = s.find(from) else { continue };
+            let part = &s[i..];
+            let part = &part[..part.find(to).unwrap_or(part.len())];
+            for (n, piece) in part.split('"').enumerate() {
+                if n % 2 == 1 && piece.chars().any(|c| c.is_alphabetic()) {
+                    checked += 1;
+                    if !keys.contains(piece) {
+                        missing.insert(format!("{file}: {piece}"));
                     }
                 }
             }
