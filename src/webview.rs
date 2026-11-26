@@ -4,7 +4,7 @@
 //!
 //! It runs as a second RayEtch process (`rayetch --webtool <json>`), so its window and event loop
 //! never get in the way of the main window's. It uses the system's web engine (WebKit on macOS,
-//! WebView2 on Windows). Like the original it tells the sites who it is with "LightBurn" at the
+//! WebView2 on Windows, WebKitGTK on Linux). Like the original it tells the sites who it is with "LightBurn" at the
 //! end of its user agent (webtools.json UserAgentSuffix): that is what makes Cuttle and My Laser
 //! Tools show their "Send to LightBurn" button, renamed "Send to RayEtch" on the page. What it reports back goes on its standard output, one line each:
 //! `IMPORT <path>` for a finished download, which the main window imports into the design
@@ -86,7 +86,29 @@ pub fn allowed(spec: &Spec, url: &str) -> bool {
     ok(&spec.home) || spec.allowed_domains.iter().any(|d| ok(d))
 }
 
-#[cfg(any(target_os = "macos", windows))]
+/// Builds a web view into the tool window: a child at given bounds on macOS and Windows, packed
+/// into the window's GTK box on Linux (the way that works on both X11 and Wayland).
+trait BuildIn {
+    fn build_in(self, window: &tao::window::Window) -> wry::Result<wry::WebView>;
+}
+
+impl BuildIn for wry::WebViewBuilder<'_> {
+    #[cfg(not(target_os = "linux"))]
+    fn build_in(self, window: &tao::window::Window) -> wry::Result<wry::WebView> {
+        self.build_as_child(window)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn build_in(self, window: &tao::window::Window) -> wry::Result<wry::WebView> {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        match window.default_vbox() {
+            Some(vbox) => self.build_gtk(vbox),
+            None => Err(wry::Error::MessageSender),
+        }
+    }
+}
+
 pub fn run(spec_json: &str) {
     use std::sync::{Arc, Mutex};
     use tao::dpi::{LogicalPosition, LogicalSize};
@@ -151,10 +173,22 @@ label{{display:flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer
         .with_ipc_handler(move |req| {
             let _ = p.send_event(Ev::Bar(req.body().clone()));
         })
-        .build_as_child(&window)
+        .build_in(&window)
     else {
         return;
     };
+    // Linux: the toolbar keeps its height at the top of the window's box, the page takes the rest
+    #[cfg(target_os = "linux")]
+    if let Some(vbox) = {
+        use tao::platform::unix::WindowExtUnix;
+        window.default_vbox()
+    } {
+        use gtk::prelude::*;
+        use wry::WebViewExtUnix;
+        let w = bar.webview();
+        w.set_size_request(-1, BAR as i32);
+        vbox.set_child_packing(&w, false, false, 0, gtk::PackType::Start);
+    }
 
     let dl_dir = std::env::temp_dir().join("RayEtch-webtools");
     let _ = std::fs::create_dir_all(&dl_dir);
@@ -212,7 +246,9 @@ if(document.body)go();else document.addEventListener('DOMContentLoaded',go);}})(
         );
         b = b.with_initialization_script(js);
     }
-    let Ok(view) = b.build_as_child(&window) else { return };
+    let Ok(view) = b.build_in(&window) else { return };
+    // tells the main window the tool window is up (otherwise it falls back to the system browser)
+    println!("READY");
 
     let name = spec.name.clone();
     let home = spec.home.clone();
@@ -223,8 +259,11 @@ if(document.body)go();else document.addEventListener('DOMContentLoaded',go);}})(
         match event {
             Event::WindowEvent { event: WindowEvent::Resized(s), .. } => {
                 let s = s.to_logical::<f64>(window.scale_factor());
-                let _ = bar.set_bounds(bounds(s.width, s.height, true));
-                let _ = view.set_bounds(bounds(s.width, s.height, false));
+                // on Linux the window's box lays them out by itself
+                if !cfg!(target_os = "linux") {
+                    let _ = bar.set_bounds(bounds(s.width, s.height, true));
+                    let _ = view.set_bounds(bounds(s.width, s.height, false));
+                }
             }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 let s = window.inner_size().to_logical::<f64>(window.scale_factor());
@@ -266,14 +305,6 @@ if(document.body)go();else document.addEventListener('DOMContentLoaded',go);}})(
             _ => {}
         }
     });
-}
-
-/// Linux: no web engine is built in yet, so the tool opens in the system browser.
-#[cfg(not(any(target_os = "macos", windows)))]
-pub fn run(spec_json: &str) {
-    if let Ok(spec) = serde_json::from_str::<Spec>(spec_json) {
-        super::webtools::open_url(&spec.home);
-    }
 }
 
 #[cfg(test)]

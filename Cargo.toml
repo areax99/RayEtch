@@ -31,9 +31,14 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSData"] }
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSImage"] }
 
-[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+# the web tool window (Strumenti Web): the system web engine on every system
+# (WebKit on macOS, WebView2 on Windows, WebKitGTK 4.1 on Linux)
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tao = "0.34"
 wry = "0.53"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 
 [profile.dev]
 opt-level = 1

@@ -267,6 +267,8 @@ pub struct RayEtch {
     pub preview: Option<Preview>,
     pub show_device: bool,
     pub show_about: bool,
+    /// Guida › Segnala un problema…
+    pub bug_report: Option<crate::bugreport::BugReport>,
     /// Help > Updates: the window, and the GitHub check behind it (update.rs).
     pub show_updates: bool,
     pub updates: crate::update::Checker,
@@ -644,6 +646,7 @@ impl RayEtch {
             preview: None,
             show_device: false,
             show_about: false,
+            bug_report: None,
             show_updates: false,
             updates: Default::default(),
             auto_update_pending: false,

@@ -73,22 +73,29 @@ case "$DISTRO" in
       echo "Errore: pacchetto GTK3 non trovato negli indici APT; aggiorna gli indici e riprova." >&2
       exit 1
     fi
-    set -- "$GTK" libudev1 libgl1 libegl1 libgl1-mesa-dri libxkbcommon0 \
+    # the web tool window (Strumenti Web) uses WebKitGTK 4.1
+    if apt-cache show libwebkit2gtk-4.1-0 >/dev/null 2>&1; then
+      WEBKIT=libwebkit2gtk-4.1-0
+    else
+      echo "Errore: pacchetto libwebkit2gtk-4.1-0 non trovato negli indici APT (serve Ubuntu 22.04 / Debian 12 o più recenti)." >&2
+      exit 1
+    fi
+    set -- "$GTK" "$WEBKIT" libudev1 libgl1 libegl1 libgl1-mesa-dri libxkbcommon0 \
       libwayland-client0 libx11-6 shared-mime-info desktop-file-utils xdg-desktop-portal
     ;;
   fedora)
     MANAGER=dnf
-    set -- gtk3 systemd-libs libglvnd-glx libglvnd-egl mesa-dri-drivers \
+    set -- gtk3 webkit2gtk4.1 systemd-libs libglvnd-glx libglvnd-egl mesa-dri-drivers \
       libxkbcommon libX11 shared-mime-info desktop-file-utils xdg-desktop-portal
     ;;
   arch)
     MANAGER=pacman
-    set -- gtk3 systemd-libs libglvnd mesa libxkbcommon wayland libx11 \
+    set -- gtk3 webkit2gtk-4.1 systemd-libs libglvnd mesa libxkbcommon wayland libx11 \
       shared-mime-info desktop-file-utils xdg-desktop-portal
     ;;
   opensuse)
     MANAGER=zypper
-    set -- libgtk-3-0 libudev1 Mesa-libGL1 Mesa-libEGL1 Mesa-dri libxkbcommon0 \
+    set -- libgtk-3-0 libwebkit2gtk-4_1-0 libudev1 Mesa-libGL1 Mesa-libEGL1 Mesa-dri libxkbcommon0 \
       libwayland-client0 libX11-6 shared-mime-info desktop-file-utils xdg-desktop-portal
     ;;
   *)

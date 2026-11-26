@@ -75,9 +75,12 @@ fn launch(app: &mut RayEtch, s: &crate::webview::Spec) {
             app.status = format!("{}: {}", s.name, s.home);
             if let Some(out) = child.stdout.take() {
                 let ctx = app.repaint_ctx.clone();
+                let home = s.home.clone();
                 std::thread::spawn(move || {
                     use std::io::BufRead;
+                    let mut ready = false;
                     for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                        ready |= line == "READY";
                         if let Some(p) = line.strip_prefix("IMPORT ") {
                             if let Ok(mut q) = DOWNLOADS.lock() {
                                 q.push(std::path::PathBuf::from(p));
@@ -88,6 +91,11 @@ fn launch(app: &mut RayEtch, s: &crate::webview::Spec) {
                         }
                     }
                     let _ = child.wait();
+                    // no web engine on this computer (e.g. WebView2 missing on an old Windows):
+                    // the tool still opens, in the system browser
+                    if !ready {
+                        open_url(&home);
+                    }
                 });
             }
         }

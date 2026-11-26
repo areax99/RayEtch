@@ -13,6 +13,7 @@ mod organize;
 mod lasertools;
 mod webtools;
 mod webview;
+mod bugreport;
 mod canvas;
 mod combine;
 mod device_ui;

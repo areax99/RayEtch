@@ -87,6 +87,9 @@ pub struct Prefs {
     pub inches: bool,
     pub snap_to_objects: bool,
     pub snap_to_grid: bool,
+    /// set once the grid snap has been turned off for the person (they asked drawing not to stick to it)
+    #[serde(default)]
+    pub snap_grid_off_once: bool,
     pub grid_contrast: GridContrast,
     pub grid_spacing: f64,
     pub snap_grid_distance: f64,
@@ -178,7 +181,9 @@ impl Default for Prefs {
             double_click_edits_text: false,
             inches: false,
             snap_to_objects: true,
-            snap_to_grid: true,
+            // off: drawing and dragging follow the pointer freely (the person's choice)
+            snap_to_grid: false,
+            snap_grid_off_once: true,
             grid_contrast: GridContrast::Low,
             grid_spacing: 10.0,
             snap_grid_distance: 1.0,
@@ -264,6 +269,13 @@ impl Prefs {
         if p.nudge == 5.0 && p.nudge_fine == 1.0 {
             p.nudge = 1.0;
             p.nudge_fine = 5.0;
+        }
+        // saved before the person asked for free drawing: grid snap goes off once (it can be turned
+        // back on in Impostazioni > Unità e Griglie)
+        if !p.snap_grid_off_once {
+            p.snap_to_grid = false;
+            p.snap_grid_off_once = true;
+            p.save();
         }
         p
     }

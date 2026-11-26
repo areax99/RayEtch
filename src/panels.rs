@@ -523,6 +523,15 @@ pub fn menu_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                     let ctx = ui.ctx().clone();
                     crate::sysmenu::run(app, &ctx, "updates");
                 }
+                ui.separator();
+                for (id, label) in [("report_bug", tr("Segnala un problema…")), ("github", tr("RayEtch su GitHub"))] {
+                    if ui.button(label).clicked() {
+                        ui.close();
+                        let ctx = ui.ctx().clone();
+                        crate::sysmenu::run(app, &ctx, id);
+                    }
+                }
+                ui.separator();
                 if ui.button(tr("Informazioni su RayEtch")).clicked() {
                     app.show_about = true;
                 }
@@ -3416,6 +3425,7 @@ pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
     crate::lasertools::windows(app, ctx);
     crate::webtools::manage_window(app, ctx);
     crate::webtools::pump(app, ctx);
+    crate::bugreport::window(app, ctx);
     undo_history_window(app, ctx);
     crate::barcode::window(app, ctx);
     if app.lib_edit.is_some() {

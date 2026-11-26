@@ -274,7 +274,14 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
     )
     .ok()?;
 
-    let help = Submenu::with_items(tr("Guida"), true, &[&item("updates", tr("Aggiornamenti…"), None), &item("about", tr("Informazioni su RayEtch"), None)]).ok()?;
+    let help = Submenu::with_items(tr("Guida"), true, &[
+            &item("updates", tr("Aggiornamenti…"), None),
+            &sep(),
+            &item("report_bug", tr("Segnala un problema…"), None),
+            &item("github", tr("RayEtch su GitHub"), None),
+            &sep(),
+            &item("about", tr("Informazioni su RayEtch"), None),
+        ]).ok()?;
 
     menu.append_items(&[&app_menu, &file, &edit, &tools, &arrange, &laser, &web, &window, &help]).ok()?;
     #[cfg(target_os = "macos")]
@@ -502,6 +509,9 @@ pub fn run(app: &mut RayEtch, ctx: &egui::Context, id: &str) {
             "settings" => app.show_settings = true,
             "lang_auto" => app.set_language(None, ctx),
             "settings_win" => app.show_settings = true,
+            // Guida: where to report bugs and the project's repository
+            "report_bug" => app.bug_report = Some(crate::bugreport::BugReport::new()),
+            "github" => crate::webtools::open_url("https://github.com/areax99/RayEtch"),
             "theme_system" | "theme_light" | "theme_dark" => {
                 use crate::prefs::AppTheme;
                 let mut p = app.prefs.clone();

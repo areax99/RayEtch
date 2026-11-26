@@ -4055,6 +4055,7 @@ dependencies = [
  "eframe",
  "epaint_default_fonts",
  "flate2",
+ "gtk",
  "i_overlay",
  "image",
  "muda",

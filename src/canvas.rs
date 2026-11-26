@@ -31,26 +31,34 @@ pub fn display_color(i: usize) -> Color32 {
     if i == 0 || i >= LAYER_COUNT { crate::theme::p().layer0 } else { layer_color(i) }
 }
 
-/// Light theme small-square rule from the original (EditWindow::drawGrid 0x1009fd344, light branch):
-/// small squares are hidden while a big square is at most 80 px wide on screen; above that their grey
-/// fades from 248 (GRID_MINOR_BASE) towards halfway to the big-square grey 224 (GridShade default,
-/// Preferences ctor 0x10098b514), reached when t = (px - 60) / 120 = 1. The dark theme keeps its colour.
+/// Small-square rule from the original (EditWindow::drawGrid 0x1009fd344): the big squares are
+/// "Visualizza spaziatura griglia" wide (GridSpacing, 10 mm) at every zoom; their tenths (eighths in
+/// inches) stay hidden while a big square is at most 80 px wide on screen, then fade in from the page
+/// colour towards halfway to the big-square grey, reached when t = (px - 60) / 120 = 1.
 pub const GRID_MINOR_HIDE_PX: f32 = 80.0;
 pub const GRID_FADE_START_PX: f32 = 60.0;
 pub const GRID_FADE_RANGE_PX: f32 = 120.0;
+/// Light theme: page 248 (GRID_MINOR_BASE), big squares 224 (GridShade default, Preferences ctor
+/// 0x10098b514); the dark theme fades between its own page and big-square colours the same way.
+#[allow(dead_code)]
 pub const GRID_MINOR_BASE: f32 = 248.0;
+#[allow(dead_code)]
 pub const GRID_SHADE: f32 = 224.0;
+/// RayEtch's own guard: when big squares would be closer than this on screen, every tenth is drawn.
+pub const GRID_MIN_MAJOR_PX: f32 = 4.0;
 
 fn minor_grid_color(major_px: f32) -> Option<Color32> {
-    if !crate::theme::p().light {
-        return Some(crate::theme::p().grid_minor);
-    }
     if major_px <= GRID_MINOR_HIDE_PX {
         return None;
     }
     let t = ((major_px - GRID_FADE_START_PX) / GRID_FADE_RANGE_PX).min(1.0);
-    let full = (GRID_MINOR_BASE + GRID_SHADE) / 2.0;
-    Some(Color32::from_gray((GRID_MINOR_BASE + (full - GRID_MINOR_BASE) * t).round() as u8))
+    let pal = crate::theme::p();
+    let (bg, big) = (pal.canvas_ws, pal.grid_major);
+    let ch = |a: u8, b: u8| {
+        let full = (a as f32 + b as f32) / 2.0;
+        (a as f32 + (full - a as f32) * t).round() as u8
+    };
+    Some(Color32::from_rgb(ch(bg.r(), big.r()), ch(bg.g(), big.g()), ch(bg.b(), big.b())))
 }
 
 /// "Contrasto griglia" (Impostazioni > Unità e Griglie): Basso keeps the theme's grid colours,
@@ -506,6 +514,12 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
         app.view.last_area = area.size();
         fit_view(app, area);
         app.view.fit_pending = false;
+        // RAYETCH_CANVAS_ZOOM=4 (for testing): zoom in that much on the middle after fitting
+        if app.screenshot.is_some()
+            && let Some(z) = std::env::var("RAYETCH_CANVAS_ZOOM").ok().and_then(|z| z.parse::<f32>().ok())
+        {
+            zoom_relative(app, z);
+        }
     }
     let painter = ui.painter_at(full);
     let xf = Xf { origin: area.min + app.view.offset, zoom: app.view.zoom };
@@ -946,27 +960,46 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
     let ws = Rect::from_two_pos(xf.to_screen([0.0, 0.0]), xf.to_screen([d.width, d.height]));
     painter.rect_filled(ws, 0.0, crate::theme::p().canvas_ws);
     // grid
-    // "Visualizza spaziatura griglia" (Impostazioni > Unità e Griglie) is the finest step shown
-    let step = nice_step(app.view.zoom).max(app.prefs.grid_spacing.max(0.1));
-    let major = step * 10.0;
-    let minor_color = minor_grid_color((major as f32) * app.view.zoom);
-    let mut x = 0.0;
-    while x <= d.width + 1e-6 {
-        let is_major = (x / major).fract().abs() < 1e-9;
-        let c = if is_major { Some(crate::theme::p().grid_major) } else { minor_color }.map(|c| grid_contrast(app, c));
-        if let Some(c) = c {
-            painter.line_segment([xf.to_screen([x, 0.0]), xf.to_screen([x, d.height])], Stroke::new(1.0, c));
-        }
-        x += step;
+    // big squares every "Visualizza spaziatura griglia" (10 mm), their tenths fading in when zoomed
+    let mut major = app.prefs.grid_spacing.max(0.05);
+    while (major as f32) * app.view.zoom < GRID_MIN_MAJOR_PX {
+        major *= 10.0;
     }
-    let mut y = 0.0;
-    while y <= d.height + 1e-6 {
-        let is_major = (y / major).fract().abs() < 1e-9;
-        let c = if is_major { Some(crate::theme::p().grid_major) } else { minor_color }.map(|c| grid_contrast(app, c));
-        if let Some(c) = c {
-            painter.line_segment([xf.to_screen([0.0, y]), xf.to_screen([d.width, y])], Stroke::new(1.0, c));
+    let minor_color = minor_grid_color((major as f32) * app.view.zoom);
+    let step = if minor_color.is_some() { major / 10.0 } else { major };
+    let major_color = grid_contrast(app, crate::theme::p().grid_major);
+    let minor_color = minor_color.map(|c| grid_contrast(app, c));
+    // only the lines inside the window are drawn
+    let vis = |a: f64, b: f64, max: f64| ((a.min(b) / step).floor().max(0.0) as i64, ((a.max(b) / step).ceil() * step).min(max));
+    let tl = xf.to_world(area.left_top());
+    let br = xf.to_world(area.right_bottom());
+    let per = (major / step).round() as i64;
+    for pass in [false, true] {
+        // tenths first, big squares over them
+        let (i0, x1) = vis(tl[0], br[0], d.width);
+        let mut i = i0;
+        while (i as f64) * step <= x1 + 1e-9 {
+            let x = i as f64 * step;
+            let is_major = i % per == 0;
+            if is_major == pass {
+                if let Some(c) = if is_major { Some(major_color) } else { minor_color } {
+                    painter.line_segment([xf.to_screen([x, 0.0]), xf.to_screen([x, d.height])], Stroke::new(1.0, c));
+                }
+            }
+            i += 1;
         }
-        y += step;
+        let (j0, y1) = vis(tl[1], br[1], d.height);
+        let mut j = j0;
+        while (j as f64) * step <= y1 + 1e-9 {
+            let y = j as f64 * step;
+            let is_major = j % per == 0;
+            if is_major == pass {
+                if let Some(c) = if is_major { Some(major_color) } else { minor_color } {
+                    painter.line_segment([xf.to_screen([0.0, y]), xf.to_screen([d.width, y])], Stroke::new(1.0, c));
+                }
+            }
+            j += 1;
+        }
     }
     painter.rect_stroke(ws, 0.0, Stroke::new(1.0, Color32::from_rgb(90, 96, 108)), StrokeKind::Outside);
     // "Mostra la croce al centro dell'area di lavoro"

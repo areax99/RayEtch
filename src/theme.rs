@@ -19,6 +19,7 @@ pub struct Palette {
     pub text_dim: Color32,
     pub canvas_out: Color32,
     pub canvas_ws: Color32,
+    #[allow(dead_code)]
     pub grid_minor: Color32,
     pub grid_major: Color32,
     /// Inactive and hovered button surfaces.
@@ -99,11 +100,12 @@ pub static LIGHT: Palette = Palette {
     text: Color32::from_rgb(0, 0, 0),
     text_dim: Color32::from_rgb(0x78, 0x78, 0x78),
     canvas_out: Color32::from_rgb(0xBD, 0xC3, 0xC7),
-    canvas_ws: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-    // the person asked for fainter small squares: the original's GridMinor colour at alpha 0x30
-    // instead of 0x80; every 10th line keeps GridMajor #807F8C8D as before
-    grid_minor: Color32::from_rgba_unmultiplied_const(0x95, 0xA5, 0xA6, 0x30),
-    grid_major: Color32::from_rgba_unmultiplied_const(0x7F, 0x8C, 0x8D, 0x80),
+    // the work area and its squares as the original draws them (pictures 37-38; EditWindow::drawGrid
+    // 0x1009fd344, light branch): page grey 248, big squares GridShade 224; the tenths fade in
+    // between the two when zoomed (canvas.rs)
+    canvas_ws: Color32::from_rgb(0xF8, 0xF8, 0xF8),
+    grid_minor: Color32::from_rgb(0xEC, 0xEC, 0xEC),
+    grid_major: Color32::from_rgb(0xE0, 0xE0, 0xE0),
     btn: Color32::from_rgb(0xF0, 0xF0, 0xF0),
     btn_hover: Color32::from_rgb(0xE3, 0xE3, 0xE3),
     btn_stroke: Color32::from_rgb(0xA0, 0xA0, 0xA0),

@@ -50,13 +50,13 @@ Install the native development packages first. On Ubuntu/Debian:
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev
+sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 On Fedora:
 
 ```sh
-sudo dnf install gcc pkgconf systemd-devel gtk3-devel
+sudo dnf install gcc pkgconf systemd-devel gtk3-devel webkit2gtk4.1-devel
 ```
 
 Install Rust from a terminal:
@@ -194,13 +194,13 @@ Installa prima i pacchetti di sviluppo nativi. Su Ubuntu/Debian:
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev
+sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 Su Fedora:
 
 ```sh
-sudo dnf install gcc pkgconf systemd-devel gtk3-devel
+sudo dnf install gcc pkgconf systemd-devel gtk3-devel webkit2gtk4.1-devel
 ```
 
 Installa Rust dal terminale:
@@ -338,13 +338,13 @@ Instala primero los paquetes de desarrollo nativos. En Ubuntu/Debian:
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev
+sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 En Fedora:
 
 ```sh
-sudo dnf install gcc pkgconf systemd-devel gtk3-devel
+sudo dnf install gcc pkgconf systemd-devel gtk3-devel webkit2gtk4.1-devel
 ```
 
 Instala Rust desde una terminal:
@@ -482,13 +482,13 @@ Installez d'abord les paquets de développement natifs. Sur Ubuntu/Debian :
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev
+sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 Sur Fedora :
 
 ```sh
-sudo dnf install gcc pkgconf systemd-devel gtk3-devel
+sudo dnf install gcc pkgconf systemd-devel gtk3-devel webkit2gtk4.1-devel
 ```
 
 Installez Rust depuis un terminal :
@@ -626,13 +626,13 @@ Installiere zuerst die nativen Entwicklungspakete. Unter Ubuntu/Debian:
 
 ```sh
 sudo apt update
-sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev
+sudo apt install build-essential pkg-config libudev-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
 Unter Fedora:
 
 ```sh
-sudo dnf install gcc pkgconf systemd-devel gtk3-devel
+sudo dnf install gcc pkgconf systemd-devel gtk3-devel webkit2gtk4.1-devel
 ```
 
 Installiere Rust im Terminal:
