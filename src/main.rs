@@ -2,6 +2,15 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod barcode;
+mod barcode_dicts;
+mod trim;
+mod vartext;
+mod editops;
+mod filemenu;
+mod toolsmenu;
+mod organize;
+mod lasertools;
 mod canvas;
 mod combine;
 mod device_ui;
@@ -48,6 +57,7 @@ fn main() -> eframe::Result<()> {
     }
     if screenshot.is_none() {
         std::thread::spawn(fileicon::register);
+        filemenu::backup_prefs();
     }
     let viewport = eframe::egui::ViewportBuilder::default()
         .with_title("RayEtch")
@@ -171,6 +181,62 @@ fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::Path
                 }
                 let d = t.build(&a.doc);
                 a.preview_test(d);
+            }
+            // RAYETCH_OPEN=barcode (for testing): a QR code made by a drag, its window open
+            if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("barcode")) {
+                a.tool = app::Tool::Barcode;
+                barcode::create(&mut a, [100.0, 200.0], 60.0, 60.0);
+                if let Some(d) = a.barcode_dialog.as_mut() {
+                    d.spec.kind = barcode::DEFAULT_KIND;
+                    d.spec.content = "https://example.com".into();
+                    // barcode,serial: a Code 128 serial number, counter at 41, offset 1
+                    if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("serial")) {
+                        d.spec.kind = 12;
+                        d.spec.content = "SN-0000d".into();
+                        d.spec.eval = vartext::EVAL_SERIAL;
+                        d.spec.var_offset = 1;
+                        a.doc.vars.current = 41;
+                        vartext::set(&a.doc.vars);
+                    }
+                }
+                // barcode,vartab: the Testo variabile tab
+                if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("vartab")) {
+                    a.right_tab = app::RightTab::VarText;
+                }
+                // barcode,closed: the code finished, its window shut
+                if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("closed")) {
+                    if let Some(d) = a.barcode_dialog.take() {
+                        barcode::apply(&mut a, d.shape, &d.spec);
+                    }
+                }
+            }
+            // RAYETCH_OPEN=nest (for testing): scattered shapes nested by their real outlines
+            if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("nest")) {
+                use model::{Geometry, Shape};
+                let mut ids = Vec::new();
+                for k in 0..14 {
+                    let (x, y) = (30.0 + (k * 37 % 300) as f64, 60.0 + (k * 53 % 280) as f64);
+                    let g = match k % 3 {
+                        0 => Geometry::Star { points: 5, rx: 30.0, ry: 30.0, inner: 0.4, middle: None },
+                        1 => Geometry::Ellipse { rx: 25.0, ry: 15.0 },
+                        _ => Geometry::Rect { w: 70.0, h: 20.0, radius: 0.0 },
+                    };
+                    ids.push(a.doc.add_shape(Shape::new(0, g, 0, x, y)));
+                }
+                a.selection = ids;
+                a.nest(2.0, 0.0, 4);
+                // nest,check: report any two nested shapes whose outlines overlap
+                if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("check")) {
+                    let n = a.doc.shapes.len();
+                    for i in 0..n {
+                        for j in i + 1..n {
+                            let r = combine::combine(&a.doc.shapes[i].world_paths(), &a.doc.shapes[j].world_paths(), combine::CombineOp::Intersect);
+                            if !r.is_empty() {
+                                eprintln!("overlap {i} {j}");
+                            }
+                        }
+                    }
+                }
             }
             // RAYETCH_OPEN=measure (for testing): ruler on the first shape's second piece
             if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("measure")) {

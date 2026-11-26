@@ -54,13 +54,37 @@ impl RayEtch {
             "paste" => !self.clipboard.is_empty(),
             "undo" => !self.undo.is_empty(),
             "redo" => !self.redo.is_empty(),
-            "select_all" | "preview" | "export_gcode" | "export_svg" => has_shapes,
+            "select_all" | "preview" | "export_gcode" | "export_svg" | "export" | "print_black" | "print_color" => has_shapes,
+            "save_capture" | "none" => false,
+            "invert_selection" | "delete_dups" | "select_open" | "select_open_fill" | "select_layer" | "flash_layer" | "select_circles" => has_shapes,
+            "paste_in_place" => !self.clipboard.is_empty() && !busy,
+            "undo_history" => !self.undo.is_empty() || !self.redo.is_empty(),
+            "convert_path" | "convert_bitmap" | "cut_path" | "close_path" | "close_tolerance" | "reverse" | "optimize" => n > 0 && !busy,
+            "auto_join" => n > 0 && !busy,
+            "select_contained" | "select_smaller" => n == 1,
+            "auto_group" => has_shapes,
+            "mirror_line" | "copy_along_path" => items() >= 2,
+            "two_point" | "nest" | "rubber_band" | "break_apart" | "grid_array" | "circular_array" | "order_forward" | "order_backward" | "order_front"
+            | "order_back" | "lock" | "unlock_shapes" | "dock_left" | "dock_right" | "dock_top" | "dock_bottom" => n > 0 && !busy,
+            other if other.starts_with("page_") => n > 0 && !busy,
+            other if other.starts_with("laser_sel_") => n > 0 && self.connected.is_some(),
+            "weld" | "cut_shapes" | "text_on_path" | "resize_slots" | "warp4" | "warp16" => n > 0 && !busy,
+            "bool_union" | "bool_subtract" | "bool_intersect" => items() == 2 && !busy,
+            "img_crop" => self.doc.shapes.iter().any(|s| self.selection.contains(&s.id) && matches!(s.geom, crate::model::Geometry::Image { .. })) && n >= 2,
+            "img_trace" | "img_adjust" | "img_replace" | "img_save" => self.doc.shapes.iter().any(|s| self.selection.contains(&s.id) && matches!(s.geom, crate::model::Geometry::Image { .. })),
+            "img_mask" => self.doc.shapes.iter().any(|s| self.selection.contains(&s.id) && matches!(s.geom, crate::model::Geometry::Image { .. })) && n >= 2,
             "frame" | "frame_outline" | "start" => has_shapes && self.connected.is_some(),
             "pause" | "stop" => self.job_progress.is_some() || self.paused,
             "group" | "same_w" | "same_h" | "together_h" | "together_v" => items() >= 2,
             "combine_assist" | "combine" => items() == 2,
             "dist_h_spaced" | "dist_v_spaced" | "dist_h_centered" | "dist_v_centered" => items() >= 3,
             "ungroup" => self.doc.shapes.iter().any(|s| self.selection.contains(&s.id) && !s.groups.is_empty()),
+            "pnc_wizard" => self.connected.is_some(),
+            "pnc_first" => self.connected.is_some() && items() == 1,
+            "pnc_second" => self.connected.is_some() && items() == 1 && self.pnc.a.is_some(),
+            "pnc_align" | "pnc_align_noscale" => self.pnc.a.is_some() && self.pnc.b.is_some(),
+            "pnc_reset" => self.pnc.a.is_some() || self.pnc.b.is_some() || self.pnc.fit.is_some(),
+            "taper" => self.doc.device.rotary.enabled && n > 0 && !busy,
             "home" | "unlock" | "fire_on" | "fire_off" | "run_gcode" | "goto_origin" => self.connected.is_some(),
             other if other.starts_with("align_") => items() >= 2,
             _ => true,
@@ -86,6 +110,7 @@ fn cmd(code: Code) -> Option<Accelerator> {
 }
 
 /// A submenu from shared menu rows (the same rows the window's own menu draws).
+#[allow(dead_code)]
 fn rows_submenu(title: &str, rows: Vec<crate::panels::MenuRow>) -> Option<Submenu> {
     let sub = Submenu::new(title, true);
     for row in rows {
@@ -134,109 +159,90 @@ pub fn install(ctx: &egui::Context) -> Option<SystemMenu> {
     )
     .ok()?;
 
-    let file = Submenu::with_items(
-        tr("File"),
-        true,
-        &[
-            &item("new", tr("Nuovo"), cmd(Code::KeyN)),
-            &item("open", tr("Apri…"), cmd(Code::KeyO)),
-            &sep(),
-            &item("save", tr("Salva"), cmd(Code::KeyS)),
-            &item("save_as", tr("Salva con nome…"), Some(Accelerator::new(Modifiers::META | Modifiers::SHIFT, Code::KeyS))),
-            &sep(),
-            &item("import", tr("Importa…"), cmd(Code::KeyI)),
-            &item("export_gcode", tr("Esporta G-code…"), None),
-            &item("export_svg", tr("Esporta SVG…"), None),
-        ],
-    )
-    .ok()?;
+    // the original's File menu (reference pictures 26-27), from the same rows as the window's menu
+    let file = Submenu::new(tr("File"), true);
+    fn add_rows(parent: &Submenu, rows: Vec<crate::filemenu::FileRow>) -> Option<()> {
+        use crate::filemenu::FileRow;
+        let shift_meta = Modifiers::META | Modifiers::SHIFT;
+        for row in rows {
+            match row {
+                FileRow::Sep => parent.append(&PredefinedMenuItem::separator()).ok()?,
+                FileRow::Item(id, label, _, _) => {
+                    let acc = match id.as_str() {
+                        "new" => cmd(Code::KeyN),
+                        "open" => cmd(Code::KeyO),
+                        "import" => cmd(Code::KeyI),
+                        "save" => cmd(Code::KeyS),
+                        "save_as" => Some(Accelerator::new(shift_meta, Code::KeyS)),
+                        "notes" => Some(Accelerator::new(Modifiers::META | Modifiers::ALT, Code::KeyN)),
+                        "export" => Some(Accelerator::new(Modifiers::ALT, Code::KeyX)),
+                        "print_black" => cmd(Code::KeyP),
+                        "print_color" => Some(Accelerator::new(shift_meta, Code::KeyP)),
+                        _ => None,
+                    };
+                    parent.append(&item(&id, &label, acc)).ok()?
+                }
+                FileRow::Sub(title, items) => {
+                    let sub = Submenu::new(title, true);
+                    add_rows(&sub, items)?;
+                    parent.append(&sub).ok()?
+                }
+            }
+        }
+        Some(())
+    }
+    add_rows(&file, crate::filemenu::rows(true, true))?;
 
-    // Editing keys (⌘Z, ⌘C, ⌘V…) stay with the window, so they keep working inside text fields.
-    let edit = Submenu::with_items(
-        tr("Modifica"),
-        true,
-        &[
-            &item("undo", tr("Annulla (⌘Z)"), None),
-            &item("redo", tr("Ripeti (⇧⌘Z)"), None),
-            &sep(),
-            &item("cut", tr("Taglia (⌘X)"), None),
-            &item("copy", tr("Copia (⌘C)"), None),
-            &item("paste", tr("Incolla (⌘V)"), None),
-            &item("duplicate", tr("Duplica (⌘D)"), None),
-            &item("delete", tr("Elimina (⌫)"), None),
-            &sep(),
-            &item("select_all", tr("Seleziona tutto (⌘A)"), None),
-            &sep(),
-            // NoRole in the original, so it stays here and not in the app menu (MECHANICS.md, "Menu RayEtch").
-            &item("device", tr("Impostazioni dispositivo…"), None),
-            // the running original has "Impostazioni" at the end of its Edit menu and none in the
-            // app menu (measured, MECHANICS.md round 65)
-            &item("settings", tr("Impostazioni…"), Some(Accelerator::new(Modifiers::META, Code::Comma))),
-        ],
-    )
-    .ok()?;
+    // The original's Modifica menu (reference picture 25). Editing keys (⌘Z, ⌘C, ⌘V…) stay with
+    // the window, so they keep working inside text fields: they're shown in the label.
+    let edit = Submenu::new(tr("Modifica"), true);
+    for row in crate::panels::edit_menu_rows() {
+        match row {
+            crate::panels::EditRow::Sep => edit.append(&sep()).ok()?,
+            crate::panels::EditRow::Item(id, label, keys) => {
+                let acc = (id == "settings").then(|| Accelerator::new(Modifiers::META, Code::Comma));
+                let text = if keys.is_empty() || id == "settings" { label.to_string() } else { format!("{label}\t{keys}") };
+                edit.append(&item(id, &text, acc)).ok()?
+            }
+            crate::panels::EditRow::Sub(title, items) => {
+                let sub = Submenu::new(title, true);
+                for (id, label) in items {
+                    sub.append(&item(id, label, None)).ok()?;
+                }
+                edit.append(&sub).ok()?
+            }
+        }
+    }
 
-    let tools = rows_submenu(tr("Strumenti"), crate::panels::tools_menu_rows())?;
+    // the original's Strumenti menu (reference picture 28), from the same rows as the window's
+    let tools = Submenu::new(tr("Strumenti"), true);
+    add_rows(&tools, crate::toolsmenu::rows(crate::app::Tool::Select, true, true))?;
 
-    let arrange = Submenu::with_items(
-        tr("Organizza"),
-        true,
-        &[
-            &item("group", tr("Raggruppa"), cmd(Code::KeyG)),
-            &item("ungroup", tr("Separa"), Some(Accelerator::new(Modifiers::META | Modifiers::SHIFT, Code::KeyG))),
-            &sep(),
-            &Submenu::with_items(
-                tr("Allinea (all'ultimo selezionato)"),
-                true,
-                &[
-                    &item("align_0", tr("Allinea a sinistra"), None),
-                    &item("align_4", tr("Allinea centri orizzontali"), None),
-                    &item("align_1", tr("Allinea a destra"), None),
-                    &sep(),
-                    &item("align_2", tr("Allinea in alto"), None),
-                    &item("align_5", tr("Allinea centri verticali"), None),
-                    &item("align_3", tr("Allinea in basso"), None),
-                    &sep(),
-                    &item("align_6", tr("Allinea centri"), None),
-                ],
-            )
-            .ok()?,
-            &Submenu::with_items(
-                tr("Distribuisci"),
-                true,
-                &[
-                    &item("dist_h_spaced", tr("Distribuisci spaziatura orizzontale"), None),
-                    &item("dist_v_spaced", tr("Distribuisci spaziatura verticale"), None),
-                    &item("dist_h_centered", tr("Distribuisci centri orizzontali"), None),
-                    &item("dist_v_centered", tr("Distribuisci centri verticali"), None),
-                ],
-            )
-            .ok()?,
-            &Submenu::with_items(
-                tr("Avvicina"),
-                true,
-                &[
-                    &item("together_h", tr("Avvicina orizzontalmente"), None),
-                    &item("together_v", tr("Avvicina verticalmente"), None),
-                ],
-            )
-            .ok()?,
-            &item("same_w", tr("Stessa larghezza"), None),
-            &item("same_h", tr("Stessa altezza"), None),
-            &sep(),
-            &item("offset", tr("Offset…"), None),
-            &item("mirror_h", tr("Specchia orizzontalmente"), None),
-            &item("mirror_v", tr("Specchia verticalmente"), None),
-            &sep(),
-            &item("rot_cw", tr("Ruota 90° in senso orario"), None),
-            &item("rot_ccw", tr("Ruota 90° in senso antiorario"), None),
-            &sep(),
-            &item("center_page", tr("Sposta al centro della pagina"), None),
-        ],
-    )
-    .ok()?;
+    // the original's Organizza menu (reference pictures 29-31)
+    let arrange = Submenu::new(tr("Organizza"), true);
+    add_rows(&arrange, crate::organize::rows(true, true))?;
 
-    let laser = rows_submenu(tr("Strumenti laser"), crate::panels::laser_menu_rows())?;
+    // the original's Strumenti laser menu (reference picture 32); keys shown beside the labels
+    let laser = Submenu::new(tr("Strumenti laser"), true);
+    fn add_keyed(parent: &Submenu, rows: Vec<crate::filemenu::FileRow>) -> Option<()> {
+        use crate::filemenu::FileRow;
+        for row in rows {
+            match row {
+                FileRow::Sep => parent.append(&PredefinedMenuItem::separator()).ok()?,
+                FileRow::Item(id, label, keys, _) => {
+                    let text = if keys.is_empty() { label } else { format!("{label}\t{keys}") };
+                    parent.append(&item(&id, &text, None)).ok()?
+                }
+                FileRow::Sub(title, items) => {
+                    let sub = Submenu::new(title, true);
+                    add_keyed(&sub, items)?;
+                    parent.append(&sub).ok()?
+                }
+            }
+        }
+        Some(())
+    }
+    add_keyed(&laser, crate::lasertools::rows(&|_| true))?;
 
     let window = Submenu::with_items(
         tr("Finestra"),
@@ -317,8 +323,120 @@ pub fn run(app: &mut RayEtch, ctx: &egui::Context, id: &str) {
             "import" => app.import_dialog(),
             "export_gcode" => app.save_gcode(),
             "export_svg" => app.export_svg(),
+            "new_window" => app.new_window(),
+            "notes" => app.show_notes = true,
+            "save_template" => app.save_template(),
+            "export" => app.export_drawing(),
+            "prefs_import" => app.import_prefs(ctx, false),
+            "prefs_export" => app.export_prefs(),
+            "prefs_folder" => {
+                if let Some(d) = crate::i18n::settings_file("prefs.json").and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+                    crate::filemenu::open_folder(&d);
+                }
+            }
+            "prefs_backup" => app.import_prefs(ctx, true),
+            "shortcuts" => app.show_shortcuts = true,
+            "bundle_import" => app.import_bundle(ctx),
+            "bundle_export" => app.export_bundle(),
+            "print_black" => app.print(false),
+            "print_color" => app.print(true),
+            "recent_prj_clear" => {
+                crate::i18n::save_json("recent_projects.json", &Vec::<String>::new());
+                app.menu_dirty = true;
+            }
+            "recent_tpl_clear" => {
+                crate::i18n::save_json("recent_templates.json", &Vec::<String>::new());
+                app.menu_dirty = true;
+            }
+            other if other.starts_with("recent_prj_") || other.starts_with("recent_tpl_") => {
+                if let Some(i) = other.rsplit('_').next().and_then(|n| n.parse::<usize>().ok()) {
+                    app.open_recent(other.starts_with("recent_tpl_"), i, ctx);
+                }
+            }
             "device" => app.show_device = true,
             "undo" => app.do_undo(),
+            "undo_history" => app.show_undo_history = true,
+            "invert_selection" => app.invert_selection(),
+            "paste_in_place" => app.paste_in_place(),
+            "convert_path" => app.convert_to_path(),
+            "convert_bitmap" => app.convert_to_bitmap(),
+            "cut_path" => app.generate_cut_path(),
+            "close_path" => app.close_paths(),
+            "close_tolerance" => app.edit_dialog = Some(crate::editops::EditDialog::CloseTolerance { tol: 0.1 }),
+            "auto_join" => app.auto_join(),
+            "optimize" => app.edit_dialog = Some(crate::editops::EditDialog::Optimize { simplify: 0.025, join: 0.05, remove_dups: true }),
+            "delete_dups" => app.delete_duplicates(),
+            "reverse" => app.reverse_direction(),
+            "select_open" => app.select_open_shapes(),
+            "select_open_fill" => app.select_open_fill_shapes(),
+            "select_layer" => app.select_layer_shapes(),
+            "flash_layer" => app.flash_layer(ctx.input(|i| i.time)),
+            "select_contained" => app.select_contained(),
+            "select_smaller" => app.select_smaller(),
+            "select_circles" => app.edit_dialog = Some(crate::editops::EditDialog::Circles { by_size: false, min: 0.0, max: 100.0 }),
+            "img_trace" => app.open_trace(),
+            "img_adjust" => app.open_adjust(),
+            "img_replace" => app.replace_image(),
+            "img_mask" => app.apply_mask(),
+            "img_save" => app.save_processed_bitmap(),
+            "devices" => app.open_devices(),
+            "pnc_wizard" => app.pnc.wizard = true,
+            "pnc_first" => app.pnc_set_target(false),
+            "pnc_second" => app.pnc_set_target(true),
+            "pnc_align" => app.pnc_align(true),
+            "pnc_align_noscale" => app.pnc_align(false),
+            "pnc_reset" => app.pnc_reset(),
+            "cameras" => app.cameras = Some(crate::lasertools::Cameras::scan(ctx)),
+            "rotary" => app.rotary_dialog = Some(app.doc.device.rotary.clone()),
+            "taper" => {
+                let d = app.doc.device.rotary.object_diameter;
+                app.taper_dialog = Some(crate::lasertools::TaperDialog { left: d, right: d });
+            }
+            "auto_group" => app.auto_group(),
+            "mirror_line" => app.mirror_across_line(),
+            "two_point" => app.start_two_point(),
+            "nest" => app.arrange_dialog = Some(crate::organize::ArrangeDialog::nest_default()),
+            "svgnest" => {
+                let _ = std::process::Command::new(if cfg!(target_os = "macos") { "open" } else if cfg!(windows) { "explorer" } else { "xdg-open" })
+                    .arg("https://svgnest.com")
+                    .spawn();
+            }
+            "dock_left" => app.dock(0),
+            "dock_right" => app.dock(1),
+            "dock_top" => app.dock(2),
+            "dock_bottom" => app.dock(3),
+            other if other.starts_with("page_") => app.move_to_page(other),
+            other if other.starts_with("laser_sel_") => app.laser_to_selection(other),
+            "grid_array" => app.arrange_dialog = Some(crate::organize::ArrangeDialog::grid_default()),
+            "circular_array" => app.arrange_dialog = Some(crate::organize::ArrangeDialog::circular_default(app)),
+            "copy_along_path" => app.arrange_dialog = Some(crate::organize::ArrangeDialog::AlongPath { count: 5, rotate: true }),
+            "rubber_band" => app.rubber_band(),
+            "break_apart" => app.break_apart(),
+            "order_forward" => app.reorder(0),
+            "order_backward" => app.reorder(1),
+            "order_front" => app.reorder(2),
+            "order_back" => app.reorder(3),
+            "lock" => app.set_locked(true),
+            "unlock_shapes" => app.set_locked(false),
+            "tool_nodes" => {
+                app.node_edit = Default::default();
+                app.tool = crate::app::Tool::Nodes;
+            }
+            "weld" => app.weld(),
+            "bool_union" => app.combine_selection(crate::combine::CombineOp::Union),
+            "bool_subtract" => app.combine_selection(crate::combine::CombineOp::Subtract),
+            "bool_intersect" => app.combine_selection(crate::combine::CombineOp::Intersect),
+            "cut_shapes" => app.cut_shapes(),
+            "trace_files" => app.trace_files(),
+            "text_on_path" => app.text_on_path(),
+            "img_crop" => app.crop_image(),
+            "resize_slots" => app.slot_dialog = Some(crate::toolsmenu::SlotDialog { width: 3.0, new_width: 3.2, tol: 0.1 }),
+            "warp4" => app.start_warp(2),
+            "warp16" => app.start_warp(4),
+            "tangent_circle" => {
+                app.tangent = Default::default();
+                app.tool = crate::app::Tool::Tangent;
+            }
             "redo" => app.do_redo(),
             "cut" => app.cut(),
             "copy" => app.copy(),

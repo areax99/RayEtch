@@ -132,7 +132,7 @@ fn start_it(s: StartFrom) -> &'static str {
 
 /// The drawing tools, in the order of the toolbar on the left (the shapes are its Rettangolo
 /// button's menu). The Strumenti menus list exactly these, with the same names.
-pub const TOOLBAR_TOOLS: [Tool; 14] = [
+pub const TOOLBAR_TOOLS: [Tool; 16] = [
     Tool::Select,
     Tool::Line,
     Tool::Rect,
@@ -143,7 +143,9 @@ pub const TOOLBAR_TOOLS: [Tool; 14] = [
     Tool::Octagon,
     Tool::Star,
     Tool::DualStar,
+    Tool::Trim,
     Tool::Text,
+    Tool::Barcode,
     Tool::Measure,
     Tool::PositionLaser,
     Tool::Tabs,
@@ -157,7 +159,9 @@ pub fn tool_menu_id(t: Tool) -> String {
 /// One menu row: an action id and its label, or a separator (None).
 pub type MenuRow = Option<(String, &'static str)>;
 
-/// Strumenti: the toolbar's tools, then its edit buttons, in the toolbar's order and words.
+/// The toolbar's tools, then its edit buttons (the Strumenti menu before it followed the
+/// original's, picture 28; kept for tests and tools).
+#[allow(dead_code)]
 pub fn tools_menu_rows() -> Vec<MenuRow> {
     let mut v: Vec<MenuRow> = TOOLBAR_TOOLS.iter().map(|t| Some((tool_menu_id(*t), tool_it(*t)))).collect();
     v.push(None);
@@ -177,8 +181,142 @@ pub fn tools_menu_rows() -> Vec<MenuRow> {
     v
 }
 
-/// Strumenti laser: the toolbar's laser tool first, then the laser actions. The same rows in
-/// the window's menu and the macOS menu bar.
+/// The File menu's rows in the window's own menu bar (Windows, Linux).
+fn file_rows(app: &mut RayEtch, ui: &mut egui::Ui, rows: Vec<crate::filemenu::FileRow>) {
+    use crate::filemenu::FileRow;
+    let ctx = ui.ctx().clone();
+    for row in rows {
+        match row {
+            FileRow::Sep => {
+                ui.separator();
+            }
+            FileRow::Item(id, label, keys, on) => {
+                if ui.add_enabled(on, egui::Button::new(label).shortcut_text(keys)).clicked() {
+                    ui.close();
+                    crate::sysmenu::run(app, &ctx, &id);
+                }
+            }
+            FileRow::Sub(title, items) => {
+                ui.menu_button(title, |ui| file_rows(app, ui, items));
+            }
+        }
+    }
+}
+
+/// One row of the Modifica menu.
+pub enum EditRow {
+    Sep,
+    /// action id, label, key shown beside it
+    Item(&'static str, &'static str, &'static str),
+    Sub(&'static str, Vec<(&'static str, &'static str)>),
+}
+
+/// The Modifica menu, in the original's order and words (reference picture 25). The same rows
+/// in the window's menu and the macOS menu bar.
+pub fn edit_menu_rows() -> Vec<EditRow> {
+    use EditRow::*;
+    let cmd = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
+    let shift_cmd = if cfg!(target_os = "macos") { "⇧⌘" } else { "Ctrl+Maiusc+" };
+    let alt = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
+    let alt_shift = if cfg!(target_os = "macos") { "⌥⇧" } else { "Alt+Maiusc+" };
+    let k = |a: &str, b: &str| -> &'static str { Box::leak(format!("{a}{b}").into_boxed_str()) };
+    vec![
+        Item("undo", tr("Annulla"), k(cmd, "Z")),
+        Item("redo", tr("Ripristina"), k(shift_cmd, "Z")),
+        Item("undo_history", tr("Annulla cronologia"), ""),
+        Sep,
+        Item("select_all", tr("Seleziona tutto"), k(cmd, "A")),
+        Item("invert_selection", tr("Inverti selezione"), k(shift_cmd, "I")),
+        Item("cut", tr("Taglia"), k(cmd, "X")),
+        Item("copy", tr("Copia"), k(cmd, "C")),
+        Item("duplicate", tr("Duplica"), k(cmd, "D")),
+        Item("paste", tr("Incolla"), k(cmd, "V")),
+        Item("paste_in_place", tr("Incolla in posizione"), k(alt, "V")),
+        Item("delete", tr("Elimina"), if cfg!(target_os = "macos") { "⌫" } else { "Canc" }),
+        Sep,
+        Item("convert_path", tr("Converti in percorso"), k(shift_cmd, "C")),
+        Item("convert_bitmap", tr("Converti in bitmap"), k(shift_cmd, "B")),
+        Item("cut_path", tr("Genera percorso da taglio"), ""),
+        Item("close_path", tr("Chiudi tracciato"), ""),
+        Item("close_tolerance", tr("Chiudi i percorsi selezionati con tolleranza"), ""),
+        Item("auto_join", tr("Unisci automaticamente le forme selezionate"), k(alt, "J")),
+        Item("optimize", tr("Ottimizza le forme selezionate"), k(alt_shift, "O")),
+        Item("delete_dups", tr("Elimina duplicati"), k(alt, "D")),
+        Item("reverse", tr("Inverti direzione forma"), ""),
+        Sep,
+        Item("select_open", tr("Seleziona forme aperte"), ""),
+        Item("select_open_fill", tr("Seleziona le forme aperte impostate per il riempimento"), ""),
+        Item("select_layer", tr("Seleziona tutte le forme nel livello corrente"), ""),
+        Item("flash_layer", tr("Mostra forme nel livello corrente"), ""),
+        Item("select_contained", tr("Seleziona le forme contenute"), ""),
+        Item("select_smaller", tr("Seleziona forme più piccole di quelle selezionate"), ""),
+        Item("select_circles", tr("Seleziona cerchi"), ""),
+        Sep,
+        Sub(
+            tr("Opzioni immagine"),
+            vec![
+                ("img_trace", tr("Traccia immagine")),
+                ("img_adjust", tr("Regola immagine")),
+                ("img_replace", tr("Sostituisci immagine")),
+                ("img_mask", tr("Applica maschera all'immagine")),
+                ("img_save", tr("Salva bitmap elaborata")),
+            ],
+        ),
+        Sep,
+        Item("settings", tr("Impostazioni"), if cfg!(target_os = "macos") { "⌘," } else { "" }),
+    ]
+}
+
+/// "Annulla <ultima azione>" as the original shows it; RayEtch names steps by count.
+pub fn undo_label(app: &RayEtch) -> String {
+    if app.undo.is_empty() { tr("Annulla").to_string() } else { trf("Annulla ({} passi)", &[&app.undo.len()]) }
+}
+
+/// "Annulla cronologia" (UndoHistoryDialog, on_actionUndo_History_triggered 0x10068e274): the
+/// steps that can be undone, newest first; picking one goes back to it.
+fn undo_history_window(app: &mut RayEtch, ctx: &egui::Context) {
+    if !app.show_undo_history {
+        return;
+    }
+    let mut open = true;
+    let mut back: Option<usize> = None;
+    let mut fwd: Option<usize> = None;
+    theme::centered(ctx, "undo_history", egui::Window::new(tr("Annulla cronologia")).open(&mut open).resizable(false).collapsible(false)).show(ctx, |ui| {
+        ui.set_min_width(320.0);
+        egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+            for i in 0..app.redo.len() {
+                let steps = app.redo.len() - i;
+                if ui.selectable_label(false, egui::RichText::new(trf("Passo successivo +{}", &[&steps])).color(crate::theme::p().text_dim)).clicked() {
+                    fwd = Some(steps);
+                }
+            }
+            let _ = ui.selectable_label(true, egui::RichText::new(trf("Stato attuale · {} forme", &[&app.doc.shapes.len()])).strong());
+            for k in 1..=app.undo.len() {
+                let d = &app.undo[app.undo.len() - k];
+                if ui.selectable_label(false, trf("Indietro di {} · {} forme", &[&k, &d.shapes.len()])).clicked() {
+                    back = Some(k);
+                }
+            }
+        });
+        ui.add_space(6.0);
+        if ui.add_enabled(!app.undo.is_empty() || !app.redo.is_empty(), egui::Button::new(tr("Svuota cronologia"))).clicked() {
+            app.undo.clear();
+            app.redo.clear();
+        }
+    });
+    for _ in 0..back.unwrap_or(0) {
+        app.do_undo();
+    }
+    for _ in 0..fwd.unwrap_or(0) {
+        app.do_redo();
+    }
+    if !open {
+        app.show_undo_history = false;
+    }
+}
+
+/// Strumenti laser before the menu followed the original's (picture 32; lasertools.rs).
+#[allow(dead_code)]
 pub fn laser_menu_rows() -> Vec<MenuRow> {
     let r = |id: &str, l: &'static str| Some((id.to_string(), l));
     vec![
@@ -190,6 +328,9 @@ pub fn laser_menu_rows() -> Vec<MenuRow> {
         None,
         r("interval_test", tr("Test intervallo")),
         r("material_test", tr("Test materiale")),
+        None,
+        r("devices", tr("Periferiche…")),
+        r("device", tr("Impostazioni dispositivo…")),
         None,
         r("home", tr("Home ($H)")),
         r("unlock", tr("Sblocca ($X)")),
@@ -222,6 +363,7 @@ fn always(_app: &RayEtch, ui: &mut egui::Ui, _id: &str, f: impl FnOnce(&mut egui
 const DISABLED_OPACITY: f32 = 0.3;
 
 /// Draw menu rows inside the window's menu; a click runs the same action as the menu bar.
+#[allow(dead_code)]
 fn menu_rows(app: &mut RayEtch, ui: &mut egui::Ui, rows: Vec<MenuRow>) {
     for row in rows {
         match row {
@@ -258,6 +400,12 @@ pub fn tool_it(t: Tool) -> &'static str {
         Tool::Star => tr("Stella"),
         Tool::DualStar => tr("Stella doppia"),
         Tool::Text => tr("Testo"),
+        Tool::Barcode => tr("Crea codice a barre"),
+        Tool::Trim => tr("Regola forme"),
+        Tool::Nodes => tr("Modifica nodi"),
+        Tool::Warp => tr("Selezione distorsione"),
+        Tool::Tangent => tr("Genera cerchio tangente"),
+        Tool::TwoPoint => tr("Rotazione / scala a due punti"),
         Tool::Measure => tr("Misura"),
         Tool::PositionLaser => tr("Posiziona laser"),
         Tool::Tabs => tr("Linguette"),
@@ -297,155 +445,50 @@ pub fn menu_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
             });
             ui.add_space(8.0);
             ui.menu_button(tr("File"), |ui| {
-                if ui.button(tr("Nuovo")).clicked() {
-                    app.new_doc(ui.ctx());
-                }
-                if ui.button(tr("Apri…")).clicked() {
-                    app.open_dialog(ui.ctx());
-                }
-                if ui.button(tr("Salva")).clicked() {
-                    app.save(false);
-                }
-                if ui.button(tr("Salva con nome…")).clicked() {
-                    app.save(true);
-                }
-                ui.separator();
-                if ui.button(tr("Importa…")).clicked() {
-                    app.import_dialog();
-                }
-                if ui.button(tr("Esporta G-code…")).clicked() {
-                    app.save_gcode();
-                }
-                if ui.button(tr("Esporta SVG…")).clicked() {
-                    app.export_svg();
-                }
-                ui.separator();
-                if ui.button(tr("Esci")).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+                let image = app.doc.shapes.iter().any(|s| app.selection.contains(&s.id) && matches!(s.geom, crate::model::Geometry::Image { .. }));
+                let rows = crate::filemenu::rows(image, !app.doc.shapes.is_empty());
+                file_rows(app, ui, rows);
             });
             ui.menu_button(tr("Modifica"), |ui| {
-                if ui.add_enabled(!app.undo.is_empty(), egui::Button::new(tr("Annulla"))).clicked() {
-                    app.do_undo();
-                }
-                if ui.add_enabled(!app.redo.is_empty(), egui::Button::new(tr("Ripeti"))).clicked() {
-                    app.do_redo();
-                }
-                ui.separator();
-                if ui.button(tr("Taglia")).clicked() {
-                    app.cut();
-                }
-                if ui.button(tr("Copia")).clicked() {
-                    app.copy();
-                }
-                if ui.button(tr("Incolla")).clicked() {
-                    app.paste(5.0);
-                }
-                if ui.button(tr("Duplica")).clicked() {
-                    app.duplicate();
-                }
-                if ui.button(tr("Elimina")).clicked() {
-                    app.delete_selection();
-                }
-                if ui.button(tr("Seleziona tutto")).clicked() {
-                    app.select_all();
-                }
-                ui.separator();
-                if ui.button(tr("Periferiche…")).clicked() {
-                    app.open_devices();
-                }
-                if ui.button(tr("Impostazioni dispositivo…")).clicked() {
-                    app.show_device = true;
-                }
-                if ui.button(tr("Impostazioni…")).clicked() {
-                    app.show_settings = true;
+                let ctx = ui.ctx().clone();
+                for row in edit_menu_rows() {
+                    match row {
+                        EditRow::Sep => {
+                            ui.separator();
+                        }
+                        EditRow::Item(id, label, keys) => {
+                            let label = if id == "undo" { undo_label(app) } else { label.to_string() };
+                            if ui.add_enabled(app.can(id), egui::Button::new(label).shortcut_text(keys)).clicked() {
+                                ui.close();
+                                crate::sysmenu::run(app, &ctx, id);
+                            }
+                        }
+                        EditRow::Sub(title, items) => {
+                            ui.menu_button(title, |ui| {
+                                for (id, label) in items {
+                                    if ui.add_enabled(app.can(id), egui::Button::new(label)).clicked() {
+                                        ui.close();
+                                        crate::sysmenu::run(app, &ctx, id);
+                                    }
+                                }
+                            });
+                        }
+                    }
                 }
             });
-            ui.menu_button(tr("Strumenti"), |ui| menu_rows(app, ui, tools_menu_rows()));
+            ui.menu_button(tr("Strumenti"), |ui| {
+                let image = app.doc.shapes.iter().any(|s| app.selection.contains(&s.id) && matches!(s.geom, crate::model::Geometry::Image { .. }));
+                let rows = crate::toolsmenu::rows(app.tool, !app.selection.is_empty(), image);
+                file_rows(app, ui, rows);
+            });
             ui.menu_button(tr("Organizza"), |ui| {
-                ui.menu_button(tr("Combina forme"), |ui| {
-                    for op in [crate::combine::CombineOp::Union, crate::combine::CombineOp::Subtract, crate::combine::CombineOp::Intersect] {
-                        if ui.button(op.label()).clicked() {
-                            app.combine_selection(op);
-                            ui.close();
-                        }
-                    }
-                    if ui.button(tr("Assistente combinazione…")).clicked() {
-                        app.open_combine_assistant();
-                        ui.close();
-                    }
-                });
-                if ui.button(tr("Raggruppa (Ctrl+G)")).clicked() {
-                    app.group();
-                }
-                if ui.button(tr("Separa (Ctrl+Shift+G)")).clicked() {
-                    app.ungroup();
-                }
-                ui.menu_button(tr("Allinea"), |ui| {
-                    for (i, l) in [tr("Allinea a sinistra"), tr("Allinea a destra"), tr("Allinea in alto"), tr("Allinea in basso"), tr("Allinea centri orizzontali"), tr("Allinea centri verticali"), tr("Allinea centri")].iter().enumerate() {
-                        if ui.button(*l).clicked() {
-                            app.align(i as u8);
-                        }
-                    }
-                });
-                ui.menu_button(tr("Distribuisci"), |ui| {
-                    if ui.button(tr("Spaziatura orizzontale")).clicked() {
-                        app.distribute(0, true);
-                    }
-                    if ui.button(tr("Spaziatura verticale")).clicked() {
-                        app.distribute(1, true);
-                    }
-                    if ui.button(tr("Centri orizzontali")).clicked() {
-                        app.distribute(0, false);
-                    }
-                    if ui.button(tr("Centri verticali")).clicked() {
-                        app.distribute(1, false);
-                    }
-                });
-                ui.menu_button(tr("Avvicina"), |ui| {
-                    if ui.button(tr("Orizzontalmente")).clicked() {
-                        app.move_together(0);
-                    }
-                    if ui.button(tr("Verticalmente")).clicked() {
-                        app.move_together(1);
-                    }
-                });
-                let shift = ui.input(|i| i.modifiers.shift);
-                if ui.button(tr("Stessa larghezza")).clicked() {
-                    app.make_same_size(0, shift);
-                }
-                if ui.button(tr("Stessa altezza")).clicked() {
-                    app.make_same_size(1, shift);
-                }
-                ui.separator();
-                if ui.button(tr("Offset…")).clicked() {
-                    app.open_offset();
-                }
-                if ui.button(tr("Specchia orizzontalmente")).clicked() {
-                    app.mirror(true);
-                }
-                if ui.button(tr("Specchia verticalmente")).clicked() {
-                    app.mirror(false);
-                }
-                ui.separator();
-                if ui.button(tr("Ruota 90° in senso orario")).clicked() {
-                    app.rotate_sel(-90.0);
-                }
-                if ui.button(tr("Ruota 90° in senso antiorario")).clicked() {
-                    app.rotate_sel(90.0);
-                }
-                ui.separator();
-                for (i, l) in [tr("Allinea a sinistra"), tr("Allinea a destra"), tr("Allinea in alto"), tr("Allinea in basso"), tr("Centra orizzontalmente"), tr("Centra verticalmente")].iter().enumerate() {
-                    if ui.button(*l).clicked() {
-                        app.align(i as u8);
-                    }
-                }
-                ui.separator();
-                if ui.button(tr("Sposta al centro della pagina")).clicked() {
-                    app.center_on_page();
-                }
+                let rows = crate::organize::rows(!app.selection.is_empty(), app.connected.is_some());
+                file_rows(app, ui, rows);
             });
-            ui.menu_button(tr("Strumenti laser"), |ui| menu_rows(app, ui, laser_menu_rows()));
+            ui.menu_button(tr("Strumenti laser"), |ui| {
+                let rows = crate::lasertools::rows(&|id| app.can(id));
+                file_rows(app, ui, rows);
+            });
             ui.menu_button(tr("Finestra"), |ui| {
                 if ui.button(tr("Adatta alla pagina")).clicked() {
                     app.view.fit_pending = true;
@@ -1166,7 +1209,13 @@ fn tool_button(ui: &mut egui::Ui, t: Tool, active: bool) -> egui::Response {
     }
     let col = if active { Color32::WHITE } else { crate::theme::p().icon };
     paint_tool_icon(p, rect.center(), t, col, 1.0);
-    resp.on_hover_text(tool_it(t))
+    // the scissors' tooltip says how to use them (as the original's: picture 20)
+    let tip = match t {
+        Tool::Trim => tr("Ritaglia le sezioni di tracciati facendo clic (⌘K)\nTieni premuto ⌘ mentre fai clic per impedire l'unione automatica del risultato\nTieni premuto Maiusc per spostare il tratto sul livello selezionato"),
+        Tool::Barcode => tr("Crea codice a barre: fai clic e trascina per crearlo e dimensionarlo"),
+        _ => tool_it(t),
+    };
+    resp.on_hover_text(tip)
 }
 
 /// The shapes button (like the original's MultiActionButton): it shows the last shape picked,
@@ -1395,6 +1444,46 @@ fn paint_tool_icon(p: &egui::Painter, c: Pos2, t: Tool, col: Color32, k: f32) {
         }
         Tool::Text => {
             p.text(c, egui::Align2::CENTER_CENTER, "A", egui::FontId::proportional(21.0 * k), col);
+        }
+        Tool::Barcode => {
+            // a small QR-like square: three finder corners and a few modules
+            let m = 3.0 * k;
+            let o0 = c - vec2(9.0, 9.0) * k;
+            for (x, y) in [(0.0, 0.0), (4.0, 0.0), (0.0, 4.0)] {
+                let tl = o0 + vec2(x * m, y * m);
+                p.rect_stroke(Rect::from_min_size(tl, vec2(2.0 * m, 2.0 * m)), 0.0, Stroke::new(1.3 * k, col), StrokeKind::Inside);
+            }
+            for (x, y) in [(4.0, 4.0), (5.0, 3.0), (3.0, 5.0), (5.0, 5.0), (3.0, 3.0)] {
+                p.rect_filled(Rect::from_min_size(o0 + vec2(x * m, y * m), vec2(m * 0.9, m * 0.9)), 0.0, col);
+            }
+        }
+        Tool::Nodes => {
+            p.add(egui::Shape::closed_line(ngon_pts(c, 5, 8.0 * k), st));
+            for q in ngon_pts(c, 5, 8.0 * k) {
+                p.rect_filled(Rect::from_center_size(q, vec2(3.5, 3.5) * k), 0.0, col);
+            }
+        }
+        Tool::Warp => {
+            p.rect_stroke(Rect::from_center_size(c, vec2(16.0, 16.0) * k), 0.0, st, StrokeKind::Middle);
+            p.line_segment([o(-8.0, 0.0), o(8.0, 0.0)], Stroke::new(1.0, col));
+            p.line_segment([o(0.0, -8.0), o(0.0, 8.0)], Stroke::new(1.0, col));
+        }
+        Tool::TwoPoint => {
+            p.circle_stroke(o(-6.0, 6.0), 2.5 * k, st);
+            p.circle_stroke(o(6.0, -6.0), 2.5 * k, st);
+            p.line_segment([o(-6.0, 6.0), o(6.0, -6.0)], Stroke::new(1.0, col));
+        }
+        Tool::Tangent => {
+            p.line_segment([o(-10.0, 9.0), o(10.0, 9.0)], st);
+            p.line_segment([o(-10.0, 9.0), o(4.0, -10.0)], st);
+            p.circle_stroke(o(-1.0, 3.5), 5.0 * k, st);
+        }
+        Tool::Trim => {
+            // scissors: two finger rings and crossing blades
+            p.circle_stroke(o(-6.0, 5.0), 3.0 * k, st);
+            p.circle_stroke(o(-6.0, -5.0), 3.0 * k, st);
+            p.line_segment([o(-3.5, 3.5), o(9.0, -6.0)], st);
+            p.line_segment([o(-3.5, -3.5), o(9.0, 6.0)], st);
         }
         Tool::Measure => {
             // ruler drawn diagonally with tick marks, like the original's ruler icon
@@ -1657,7 +1746,7 @@ pub fn tool_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
     egui::Panel::left("tools").resizable(false).exact_size(54.0).frame(theme::bar_frame(crate::theme::p().bg).inner_margin(egui::Margin::symmetric(8, 8))).show(ui, |ui| {
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
-            for t in [Tool::Select, Tool::Line, Tool::Rect, Tool::Text, Tool::Measure, Tool::PositionLaser, Tool::Tabs] {
+            for t in [Tool::Select, Tool::Line, Tool::Rect, Tool::Trim, Tool::Text, Tool::Barcode, Tool::Measure, Tool::PositionLaser, Tool::Tabs] {
                 if t == Tool::Rect {
                     shapes_button(app, ui);
                     continue;
@@ -1750,6 +1839,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
             RightTab::Move => tr("Sposta"),
             RightTab::Console => tr("Console"),
             RightTab::Shape => tr("Proprietà forma"),
+            RightTab::VarText => tr("Testo variabile"),
         });
         egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1758,7 +1848,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
                 if beginner && app.right_tab == RightTab::Console {
                     app.right_tab = RightTab::Laser;
                 }
-                for (t, l) in [(RightTab::Laser, tr("Laser")), (RightTab::Library, tr("Libreria dei materiali")), (RightTab::Move, tr("Sposta")), (RightTab::Console, tr("Console")), (RightTab::Shape, tr("Forma"))] {
+                for (t, l) in [(RightTab::Laser, tr("Laser")), (RightTab::Library, tr("Libreria dei materiali")), (RightTab::Move, tr("Sposta")), (RightTab::Console, tr("Console")), (RightTab::Shape, tr("Forma")), (RightTab::VarText, tr("Testo variabile"))] {
                     if beginner && t == RightTab::Console {
                         continue;
                     }
@@ -1772,6 +1862,7 @@ pub fn right_panel(app: &mut RayEtch, ui: &mut egui::Ui) {
                 RightTab::Move => move_tab(app, ui),
                 RightTab::Console => console_tab(app, ui),
                 RightTab::Shape => shape_tab(app, ui),
+                RightTab::VarText => crate::vartext::panel(app, ui),
             });
         });
     });
@@ -2203,8 +2294,18 @@ fn move_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
             app.send_lines(vec![crate::gcode::jog_line(true, 0.0, 0.0, app.jog_speed)]);
         }
     });
+    // the fire button (was in Strumenti laser before the menu followed the original's, picture 32)
+    ui.horizontal(|ui| {
+        let ctx = ui.ctx().clone();
+        if ui.button(tr("Fuoco acceso")).clicked() {
+            crate::sysmenu::run(app, &ctx, "fire_on");
+        }
+        if ui.button(tr("Fuoco spento")).clicked() {
+            crate::sysmenu::run(app, &ctx, "fire_off");
+        }
+    });
     if let Some(p) = app.head_pos {
-        ui.label(trf("Posizione testa: X {}  Y {}", &[&format!("{:.2}", p[0]), &format!("{:.2}", p[1])]));
+        ui.label(trf("Posizione testa: X {}  Y {}",&[&format!("{:.2}", p[0]), &format!("{:.2}", p[1])]));
     }
 }
 
@@ -3299,6 +3400,14 @@ pub(crate) fn layer_editor(app: &mut RayEtch, ctx: &egui::Context) {
 
 pub fn windows(app: &mut RayEtch, ctx: &egui::Context) {
     offset_window(app, ctx);
+    crate::editops::windows(app, ctx);
+    crate::filemenu::notes_window(app, ctx);
+    crate::filemenu::shortcuts_window(app, ctx);
+    crate::toolsmenu::slot_window(app, ctx);
+    crate::organize::windows(app, ctx);
+    crate::lasertools::windows(app, ctx);
+    undo_history_window(app, ctx);
+    crate::barcode::window(app, ctx);
     if app.lib_edit.is_some() {
         crate::material_lib::entry_editor(app, ctx);
     } else if app.test_edit.is_some() && app.material_test.is_some() {

@@ -19,7 +19,23 @@ fn build_utc() -> String {
     format!("{y:04}-{m:02}-{d:02} @ {:02}:{:02}:{:02}", rem / 3600, rem / 60 % 60, rem % 60)
 }
 
+/// Zint (vendor/zint, BSD-3-Clause), the barcode library the original also builds in, plus
+/// RayEtch's small bridge to it (vendor/rayetch_zint.c). No PNG output: only the modules are used.
+fn build_zint() {
+    println!("cargo:rerun-if-changed=vendor");
+    let mut b = cc::Build::new();
+    b.include("vendor").include("vendor/zint").define("ZINT_NO_PNG", None).warnings(false);
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        b.define("_CRT_SECURE_NO_WARNINGS", None);
+    }
+    let mut files: Vec<_> = std::fs::read_dir("vendor/zint").expect("vendor/zint").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "c")).collect();
+    files.sort();
+    b.files(files).file("vendor/rayetch_zint.c");
+    b.compile("rayetch_zint");
+}
+
 fn main() {
+    build_zint();
     // rebuild the date whenever the code changes
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rustc-env=RAYETCH_BUILD_UTC={}", build_utc());

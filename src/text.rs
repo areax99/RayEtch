@@ -172,6 +172,32 @@ fn is_rtl(c: char) -> bool {
 }
 
 /// Build outlines (mm, Y up) centred on the origin. `size` is the cap height-ish em size in mm.
+/// Each letter of one line on its own: (where it starts along the line, its advance, its outlines
+/// with the start at x = 0 and the baseline at y = 0), mm. For "Applica tracciato al testo".
+pub fn glyphs(text: &str, size: f64, font_name: &str) -> Vec<(f64, f64, Vec<Polyline>)> {
+    let list = fonts();
+    let data = list.iter().find(|f| f.name == font_name).and_then(|f| f.data()).or_else(|| list[0].data());
+    let Some(data) = data else { return Vec::new() };
+    let Ok(face) = ttf_parser::Face::parse(&data, 0) else { return Vec::new() };
+    let scale = size / face.units_per_em() as f64;
+    let mut out = Vec::new();
+    let mut x = 0.0;
+    for ch in text.chars().filter(|c| *c != '\n') {
+        let Some(gid) = face.glyph_index(ch) else {
+            x += size * 0.5;
+            continue;
+        };
+        let mut b = Builder { paths: Vec::new(), cur: Vec::new(), last: [0.0, 0.0], scale, ox: 0.0, oy: 0.0 };
+        face.outline_glyph(gid, &mut b);
+        b.flush(true);
+        merge_glyph(&mut b.paths, 0);
+        let adv = face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale;
+        out.push((x, adv, b.paths));
+        x += adv;
+    }
+    out
+}
+
 pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
     let list = fonts();
     let data = list.iter().find(|f| f.name == font_name).and_then(|f| f.data()).or_else(|| list[0].data());

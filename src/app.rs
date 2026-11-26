@@ -23,6 +23,18 @@ pub enum Tool {
     Star,
     DualStar,
     Text,
+    /// "Crea codice a barre": drag a box for a new bar code (BarCodeTool, SetEditMode 16)
+    Barcode,
+    /// "Ritaglia" (scissors): click a piece of an outline between crossings to cut it away
+    Trim,
+    /// "Modifica nodi": move, add and remove the points of an outline
+    Nodes,
+    /// "Selezione distorsione / deformazione": bend the selection with 4 or 16 points
+    Warp,
+    /// "Genera cerchio tangente": a circle touching two lines
+    Tangent,
+    /// "Rotazione / scala a due punti"
+    TwoPoint,
     Measure,
     PositionLaser,
     Tabs,
@@ -56,6 +68,8 @@ pub enum RightTab {
     Move,
     Console,
     Shape,
+    /// "Testo variabile" (VariableTextWidget): the counter and the CSV merge file
+    VarText,
 }
 
 pub enum Drag {
@@ -192,6 +206,32 @@ pub struct RayEtch {
     pub port_access_job: Option<std::sync::Arc<std::sync::Mutex<Option<Result<(), String>>>>>,
     /// the Modifica testo window: the text shape and the words being edited
     pub text_edit: Option<(u64, String)>,
+    /// The open "Proprietà codice a barre" window.
+    pub barcode_dialog: Option<crate::barcode::Dialog>,
+    /// A Modifica-menu tool window (close with tolerance, optimise, circles, trace, adjust...).
+    pub edit_dialog: Option<crate::editops::EditDialog>,
+    /// "Mostra forme nel livello corrente": (layer, until this time in seconds).
+    pub flash: Option<(usize, f64)>,
+    /// "Annulla cronologia": the undo history window is open.
+    pub show_undo_history: bool,
+    /// "Mostra note" and "Modifica tasti di scelta rapida" windows.
+    pub show_notes: bool,
+    pub show_shortcuts: bool,
+    /// The recent lists changed: the macOS menu bar is rebuilt.
+    pub menu_dirty: bool,
+    /// Strumenti: node editing, a warp in progress, the tangent circle's lines, the slot window.
+    pub node_edit: crate::toolsmenu::NodeEdit,
+    pub warp: Option<crate::toolsmenu::Warp>,
+    pub tangent: crate::toolsmenu::Tangent,
+    pub slot_dialog: Option<crate::toolsmenu::SlotDialog>,
+    /// Organizza: the two-point tool's points, an arrange window (arrays, nesting).
+    pub two_point: crate::organize::TwoPoint,
+    pub arrange_dialog: Option<crate::organize::ArrangeDialog>,
+    /// Strumenti laser: Stampa e taglia targets, and the rotary, taper and camera windows
+    pub pnc: crate::lasertools::PrintCut,
+    pub rotary_dialog: Option<crate::lasertools::Rotary>,
+    pub taper_dialog: Option<crate::lasertools::TaperDialog>,
+    pub cameras: Option<crate::lasertools::Cameras>,
     pub current_layer: usize,
     pub selected_row: Option<usize>,
     /// The canvas selection the layer list last followed: when it changes, the row of the last
@@ -554,6 +594,23 @@ impl RayEtch {
             port_access_later: Vec::new(),
             port_access_job: None,
             text_edit: None,
+            barcode_dialog: None,
+            edit_dialog: None,
+            flash: None,
+            show_undo_history: false,
+            show_notes: false,
+            show_shortcuts: false,
+            menu_dirty: false,
+            node_edit: Default::default(),
+            warp: None,
+            tangent: Default::default(),
+            slot_dialog: None,
+            two_point: Default::default(),
+            arrange_dialog: None,
+            pnc: Default::default(),
+            rotary_dialog: None,
+            taper_dialog: None,
+            cameras: None,
             current_layer: 0,
             selected_row: None,
             row_follows: Vec::new(),
@@ -621,7 +678,8 @@ impl RayEtch {
             input_script: scripted_input(),
             input_frame: 0,
             title_cache: String::new(),
-            system_menu: crate::sysmenu::install(&cc.egui_ctx),
+            // RAYETCH_WINDOW_MENU=1 (for testing): the window's own menu bar, as on Windows and Linux
+            system_menu: if std::env::var_os("RAYETCH_WINDOW_MENU").is_some() { None } else { crate::sysmenu::install(&cc.egui_ctx) },
             confirm: None,
             allow_close: false,
             offset_settings: Default::default(),
@@ -796,7 +854,7 @@ impl RayEtch {
     }
 
     fn open_dialog_now(&mut self) {
-        if let Some(p) = rfd::FileDialog::new().add_filter(tr("RayEtch project"), &["rayetch", "beamforge", "json"]).pick_file() {
+        if let Some(p) = rfd::FileDialog::new().add_filter(tr("RayEtch project"), &["rayetch", "beamforge", "json", crate::filemenu::TEMPLATE_EXT]).pick_file() {
             self.open_path_now(p);
         }
     }
@@ -813,7 +871,14 @@ impl RayEtch {
                 self.checkpoint_now();
                 self.doc = d;
                 self.restore_job_state();
-                self.path = Some(p.clone());
+                // a template opens as a new project without a name ("Modelli recenti")
+                let template = p.extension().is_some_and(|e| e == crate::filemenu::TEMPLATE_EXT);
+                self.path = if template { None } else { Some(p.clone()) };
+                if self.screenshot.is_none() {
+                    crate::filemenu::push_recent(&p);
+                    self.menu_dirty = true;
+                }
+                self.show_notes = self.doc.show_notes_on_open && !self.doc.notes.trim().is_empty();
                 self.dirty = false;
                 self.selection.clear();
                 self.textures.clear();
@@ -835,6 +900,8 @@ impl RayEtch {
         match serde_json::to_string(&self.doc).map_err(|e| e.to_string()).and_then(|s| crate::fileicon::safe_write(&p, s.as_bytes())) {
             Ok(()) => {
                 crate::fileicon::mark_saved(&p);
+                crate::filemenu::push_recent(&p);
+                self.menu_dirty = true;
                 self.path = Some(p.clone());
                 self.dirty = false;
                 // MainWindow::SaveProject 0x10098548c: "Project file saved as %1."
@@ -1009,6 +1076,14 @@ impl RayEtch {
 
     pub fn export_svg(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter("SVG", &["svg"]).set_file_name("design.svg").save_file() else { return };
+        match std::fs::write(&p, self.svg_text()) {
+            Ok(()) => self.status = trf("Esportato {}", &[&p.display()]),
+            Err(e) => self.status = trf("Impossibile esportare: {}", &[&e]),
+        }
+    }
+
+    /// The drawing as SVG (mm, Y down), each layer in its colour.
+    pub fn svg_text(&self) -> String {
         let w = self.doc.device.width;
         let h = self.doc.device.height;
         let mut s = format!(
@@ -1037,21 +1112,22 @@ impl RayEtch {
             ));
         }
         s.push_str("</svg>\n");
-        match std::fs::write(&p, s) {
-            Ok(()) => self.status = trf("Esportato {}", &[&p.display()]),
-            Err(e) => self.status = trf("Impossibile esportare: {}", &[&e]),
-        }
+        s
     }
 
     // ---------- job ----------
 
+    /// The job as the laser gets it: Stampa e taglia and the rotary applied (lasertools.rs).
     pub fn plan_job(&self) -> Job {
-        gcode::plan(&self.doc, &self.selection, &self.job_opts)
+        let opts = self.output_opts();
+        let mut job = gcode::plan(&self.doc, &self.selection, &opts);
+        self.output_transform(&mut job);
+        job
     }
 
     pub fn job_gcode(&self) -> (Job, String) {
         let job = self.plan_job();
-        let g = gcode::write_gcode(&self.doc, &job, &self.job_opts);
+        let g = gcode::write_gcode(&self.doc, &job, &self.output_opts());
         (job, g)
     }
 
@@ -1101,6 +1177,7 @@ impl RayEtch {
     }
 
     pub fn save_gcode(&mut self) {
+        crate::barcode::refresh_variable(self);
         let (job, g) = self.job_gcode();
         self.write_gcode_file(job, g, "design.gc");
     }
@@ -1135,6 +1212,8 @@ impl RayEtch {
 
     /// Start the job without the checklist (it has been ticked, or is off).
     pub fn start_job_now(&mut self) {
+        // codes with variable text show the counter, the CSV row and the clock as they are now
+        crate::barcode::refresh_variable(self);
         let (job, g) = self.job_gcode();
         self.send_job(job, g);
     }
@@ -1162,6 +1241,12 @@ impl RayEtch {
         self.job_timer = Some(JobTimer::new(job.estimate_seconds_sim(&sim), &line_secs));
         self.paused = false;
         self.status = tr("Lavoro avviato").into();
+        // "Avanzamento automatico": the next job gets the next number / CSV row
+        // (MainWindow::SendShapesTo → VariableTextManager::NextPage)
+        if self.doc.vars.auto_advance {
+            self.doc.vars.next();
+            crate::barcode::refresh_variable(self);
+        }
         // "Salva registro lavori": one line per job in joblog.csv beside the settings
         if self.prefs.save_job_log {
             let secs = job.estimate_seconds_sim(&crate::gcode::Job::sim_for(&self.doc));
@@ -1198,7 +1283,7 @@ impl RayEtch {
             self.status = tr("Niente da inquadrare.").into();
             return;
         }
-        let lines = gcode::frame_gcode(&self.doc, &job, &self.job_opts, self.jog_speed, &self.frame_power());
+        let lines = gcode::frame_gcode(&self.doc, &job, &self.output_opts(), self.jog_speed, &self.frame_power());
         self.send_lines(lines);
     }
 
@@ -1479,7 +1564,8 @@ impl RayEtch {
         self.checkpoint_now();
         let b = self.doc.bbox_of(&self.selection);
         let sel = self.selection.clone();
-        for s in self.doc.shapes.iter_mut().filter(|s| sel.contains(&s.id)) {
+        // locked shapes ("Blocca le forme selezionate") stay as they are
+        for s in self.doc.shapes.iter_mut().filter(|s| sel.contains(&s.id) && !s.locked) {
             f(s, b);
         }
     }
@@ -1925,7 +2011,7 @@ impl RayEtch {
     }
 
     /// Keep the Laser panel's states in the project, as far as the settings ask.
-    fn store_job_state(&mut self) {
+    pub fn store_job_state(&mut self) {
         let p = &self.prefs;
         let keep_sel = p.save_cut_selected_in_project;
         let keep_origin = p.save_job_origin_in_project;
@@ -2171,6 +2257,12 @@ impl eframe::App for RayEtch {
         self.poll_import(&ctx);
         self.auto_connect(&ctx);
         crate::panels::window_resize_edges(&ctx);
+        crate::vartext::sync(&self.doc.vars);
+        // the recent projects changed: the macOS menu bar shows the new list
+        if std::mem::take(&mut self.menu_dirty) && self.system_menu.is_some() {
+            let new_menu = crate::sysmenu::install(&ctx);
+            self.system_menu = new_menu;
+        }
         self.auto_update_check(&ctx);
         crate::sysmenu::handle(self, &ctx);
         self.handle_shortcuts(&ctx);
@@ -2262,11 +2354,150 @@ impl RayEtch {
         if menu_keys && sc(cmd, Key::I) {
             self.import_dialog();
         }
+        // the File menu's other keys (reference pictures 26-27)
+        if menu_keys && sc(Modifiers::ALT | cmd, Key::N) {
+            self.show_notes = true;
+        }
+        if menu_keys && sc(Modifiers::ALT, Key::X) {
+            self.export_drawing();
+        }
+        if menu_keys && sc(cmd_shift, Key::P) {
+            self.print(true);
+        }
+        if menu_keys && sc(cmd, Key::P) {
+            self.print(false);
+        }
         if menu_keys && sc(Modifiers::ALT, Key::P) {
             self.open_preview();
         }
         if typing {
             return;
+        }
+        // ⌘K / Ctrl+K: Ritaglia (the scissors' shortcut in the original's tooltip)
+        if sc(cmd, Key::K) {
+            self.tool = Tool::Trim;
+        }
+        // the Organizza menu's keys (reference pictures 29-31)
+        if sc(cmd_shift, Key::H) {
+            self.mirror(true);
+        }
+        if sc(cmd_shift, Key::V) {
+            self.mirror(false);
+        }
+        if sc(cmd_shift, Key::M) {
+            self.mirror_across_line();
+        }
+        if sc(cmd_shift, Key::N) && !self.selection.is_empty() {
+            self.arrange_dialog = Some(crate::organize::ArrangeDialog::nest_default());
+        }
+        if sc(cmd, Key::U) {
+            self.ungroup();
+        }
+        if sc(cmd, Key::Num2) {
+            self.start_two_point();
+        }
+        if sc(Modifiers::ALT, Key::B) {
+            self.break_apart();
+        }
+        if sc(cmd, Key::ArrowUp) {
+            self.reorder(2);
+        }
+        if sc(cmd, Key::ArrowDown) {
+            self.reorder(3);
+        }
+        if sc(Modifiers::NONE, Key::Period) {
+            self.rotate_sel(-90.0);
+        }
+        if sc(Modifiers::NONE, Key::Comma) {
+            self.rotate_sel(90.0);
+        }
+        // the Strumenti laser menu's keys (reference picture 32)
+        for (k, id) in [(Key::Num0, "pnc_wizard"), (Key::Num1, "pnc_first"), (Key::Num2, "pnc_second"), (Key::Num3, "pnc_align"), (Key::Num4, "pnc_align_noscale")] {
+            if sc(Modifiers::ALT, k) && self.can(id) {
+                crate::sysmenu::run(self, ctx, id);
+            }
+        }
+        if sc(cmd_shift, Key::R) {
+            crate::sysmenu::run(self, ctx, "rotary");
+        }
+        if sc(Modifiers::ALT | Modifiers::SHIFT, Key::D) {
+            self.open_devices();
+        }
+        // the Strumenti menu's keys (reference picture 28)
+        let (alt, alt_shift) = (Modifiers::ALT, Modifiers::ALT | Modifiers::SHIFT);
+        if sc(alt_shift, Key::C) {
+            self.cut_shapes();
+        }
+        if sc(alt_shift, Key::Num8) {
+            self.combine_selection(crate::combine::CombineOp::Intersect);
+        }
+        if sc(cmd, Key::L) {
+            self.tool = Tool::Line;
+        }
+        if sc(cmd, Key::R) {
+            self.tool = Tool::Rect;
+            self.shape_tool = Tool::Rect;
+        }
+        if sc(cmd, Key::E) {
+            self.tool = Tool::Ellipse;
+            self.shape_tool = Tool::Ellipse;
+        }
+        if sc(cmd, Key::T) {
+            self.tool = Tool::Text;
+        }
+        if sc(cmd, Key::W) {
+            self.weld();
+        }
+        if sc(cmd, Key::B) {
+            self.open_combine_assistant();
+        }
+        if sc(cmd, Key::Tab) {
+            self.tool = Tool::Tabs;
+        }
+        if sc(alt, Key::M) {
+            self.tool = Tool::Measure;
+        }
+        if sc(alt, Key::O) {
+            self.open_offset();
+        }
+        if sc(alt, Key::Plus) || sc(alt, Key::Equals) {
+            self.combine_selection(crate::combine::CombineOp::Union);
+        }
+        if sc(alt, Key::Minus) {
+            self.combine_selection(crate::combine::CombineOp::Subtract);
+        }
+        if sc(alt, Key::I) {
+            self.open_adjust();
+        }
+        if sc(alt, Key::T) {
+            self.open_trace();
+        }
+        if ctx.input(|i| i.modifiers.command && i.events.iter().any(|e| matches!(e, egui::Event::Text(t) if t == "<"))) {
+            self.tool = Tool::Nodes;
+        }
+        // the Modifica menu's keys (reference picture 25); with Shift before the plain ones
+        let alt = Modifiers::ALT;
+        let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
+        if sc(cmd_shift, Key::I) {
+            self.invert_selection();
+        }
+        if sc(cmd_shift, Key::C) {
+            self.convert_to_path();
+        }
+        if sc(cmd_shift, Key::B) {
+            self.convert_to_bitmap();
+        }
+        if sc(alt_shift, Key::O) && !self.selection.is_empty() {
+            self.edit_dialog = Some(crate::editops::EditDialog::Optimize { simplify: 0.025, join: 0.05, remove_dups: true });
+        }
+        if sc(alt, Key::J) {
+            self.auto_join();
+        }
+        if sc(alt, Key::D) {
+            self.delete_duplicates();
+        }
+        if sc(alt, Key::V) {
+            self.paste_in_place();
         }
         if sc(cmd_shift, Key::Z) || sc(cmd, Key::Y) {
             self.do_redo();
@@ -2313,10 +2544,29 @@ impl RayEtch {
             self.group();
         }
         let (del, esc, enter) = ctx.input(|i| (i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace), i.key_pressed(Key::Escape), i.key_pressed(Key::Enter)));
-        if del {
+        if del && self.tool == Tool::Nodes {
+            self.delete_node();
+        } else if del {
             self.delete_selection();
         }
-        if esc {
+        if enter && self.warp.is_some() {
+            self.finish_warp(true);
+        }
+        if esc && self.tool == Tool::TwoPoint && self.two_point.reference.is_some() {
+            // put the shapes back as they were before the two-point turn
+            for o in std::mem::take(&mut self.two_point.orig) {
+                if let Some(s) = self.doc.shapes.iter_mut().find(|s| s.id == o.id) {
+                    *s = o;
+                }
+            }
+            self.undo.pop();
+        }
+        if esc && self.warp.is_some() {
+            self.finish_warp(false);
+        } else if esc {
+            self.two_point = Default::default();
+            self.tangent.lines.clear();
+            self.node_edit = Default::default();
             if !self.line_pts.is_empty() {
                 self.line_pts.clear();
             } else if self.tool != Tool::Select {
@@ -2332,7 +2582,13 @@ impl RayEtch {
         }
         // arrow moves: Impostazioni > Unità e Griglie > Incrementi spostamento forma
         let (shift, cmd) = ctx.input(|i| (i.modifiers.shift, i.modifiers.command));
-        let step = if shift { self.prefs.nudge_coarse } else if cmd { self.prefs.nudge_fine } else { self.prefs.nudge };
+        // as the original: plain 1 mm, ⌘ 5 mm, ⇧ 20 mm, ⇧⌘ a tenth of the plain step
+        let step = match (shift, cmd) {
+            (true, true) => self.prefs.nudge / 10.0,
+            (true, false) => self.prefs.nudge_coarse,
+            (false, true) => self.prefs.nudge_fine,
+            _ => self.prefs.nudge,
+        };
         let mut d = [0.0, 0.0];
         ctx.input(|i| {
             if i.key_pressed(Key::ArrowLeft) {
@@ -2364,6 +2620,7 @@ impl RayEtch {
     }
 
     pub fn open_preview(&mut self) {
+        crate::barcode::refresh_variable(self);
         let (job, _) = self.job_gcode();
         self.preview = Some(Preview::new(job, None, &self.doc));
     }

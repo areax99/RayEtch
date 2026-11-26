@@ -375,11 +375,20 @@ pub fn drag_box(start: P2, cur: P2, square: bool, centred: bool) -> (P2, P2) {
     }
 }
 
+/// Size of a bar code made by a click instead of a drag, mm (estimated).
+const BARCODE_CLICK_MM: f64 = 25.0;
+
 fn create_shape(app: &mut RayEtch, a: P2, b: P2, square: bool, centred: bool) {
     let (a, b) = drag_box(a, b, square, centred);
     let w = b[0] - a[0];
     let h = b[1] - a[1];
     let c = [a[0] + w / 2.0, a[1] + h / 2.0];
+    if app.tool == Tool::Barcode {
+        // a click without a drag still gets a code, at a starting size (RayEtch's choice)
+        let (w, h) = if w.abs() < 1.0 || h.abs() < 1.0 { (BARCODE_CLICK_MM, BARCODE_CLICK_MM) } else { (w.abs(), h.abs()) };
+        crate::barcode::create(app, c, w, h);
+        return;
+    }
     let geom = match app.tool {
         Tool::Rect => {
             if w.abs() < 0.2 || h.abs() < 0.2 {
@@ -557,7 +566,7 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                             if (rotate_handle_pos(xf.to_screen(*hp), mid) - xf.to_screen(p0)).length() < ROTATE_GRAB_PX {
                                 app.checkpoint(frame);
                                 let start = (p0[1] - pivot[1]).atan2(p0[0] - pivot[0]);
-                                app.drag = Drag::Rotate { orig: app.selected_shapes(), pivot, start, deg: 0.0 };
+                                app.drag = Drag::Rotate { orig: app.movable_shapes(), pivot, start, deg: 0.0 };
                                 started = true;
                                 break;
                             }
@@ -570,7 +579,7 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                             let pp = xf.to_screen(p0);
                             if (sp - pp).length() < handle_px(app).max(7.0) {
                                 app.checkpoint(frame);
-                                app.drag = Drag::Scale { handle: i, orig: app.selected_shapes(), bbox: sel_box };
+                                app.drag = Drag::Scale { handle: i, orig: app.movable_shapes(), bbox: sel_box };
                                 started = true;
                                 break;
                             }
@@ -588,14 +597,14 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                                 app.checkpoint(frame);
                                 // the Sposta switch (bottom bar) off: shapes can be picked but not dragged
                                 if app.edit_switches[0] {
-                                    app.drag = Drag::Move { start: p0, orig: app.selected_shapes() };
+                                    app.drag = Drag::Move { start: p0, orig: app.movable_shapes() };
                                 }
                             }
                             None if inside_sel && !mods.shift => {
                                 app.checkpoint(frame);
                                 // the Sposta switch (bottom bar) off: shapes can be picked but not dragged
                                 if app.edit_switches[0] {
-                                    app.drag = Drag::Move { start: p0, orig: app.selected_shapes() };
+                                    app.drag = Drag::Move { start: p0, orig: app.movable_shapes() };
                                 }
                             }
                             None => app.drag = Drag::Rubber { start: p0 },
@@ -726,7 +735,9 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                     app.right_tab = crate::app::RightTab::Shape;
                     // "Fare doppio clic sulla selezione per visualizzare la finestra di dialogo
                     // Modifica testo"
-                    if app.prefs.double_click_edits_text {
+                    // a bar code opens its window (SelectionTool::DoubleClick → on_actionEdit_BarCode_triggered)
+                    if crate::barcode::edit(app, app.selection[0]) {
+                    } else if app.prefs.double_click_edits_text {
                         let id = app.selection[0];
                         if let Some(Geometry::Text { text, .. }) = app.doc.shapes.iter().find(|s| s.id == id).map(|s| &s.geom) {
                             app.text_edit = Some((id, text.clone()));
@@ -735,7 +746,17 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                 }
             }
         }
-        Tool::Rect | Tool::Ellipse | Tool::Polygon | Tool::Triangle | Tool::Pentagon | Tool::Octagon | Tool::Star | Tool::DualStar => {
+        Tool::Rect | Tool::Ellipse | Tool::Polygon | Tool::Triangle | Tool::Pentagon | Tool::Octagon | Tool::Star | Tool::DualStar | Tool::Barcode => {
+            if app.tool == Tool::Barcode {
+                if app.barcode_dialog.is_none() && !matches!(app.drag, Drag::Create { .. }) {
+                    app.status = crate::i18n::tr("Fai clic e trascina per creare e dimensionare un nuovo codice a barre").into();
+                }
+                if resp.clicked() {
+                    if let Some(p) = cursor {
+                        create_shape(app, p, p, false, false);
+                    }
+                }
+            }
             if resp.drag_started_by(egui::PointerButton::Primary) {
                 if let Some(p0) = press {
                     app.drag = Drag::Create { start: p0 };
@@ -744,7 +765,9 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
             if resp.drag_stopped_by(egui::PointerButton::Primary) {
                 if let Drag::Create { start } = app.drag {
                     if let Some(end) = resp.interact_pointer_pos().map(|p| xf.to_world(p)).or(cursor) {
-                        create_shape(app, start, end, square_held(&mods), mods.command);
+                        // a bar code is always dragged 1:1 (the person's request)
+                        let square = square_held(&mods) || app.tool == Tool::Barcode;
+                        create_shape(app, start, end, square, mods.command);
                     }
                 }
                 app.drag = Drag::None;
@@ -766,6 +789,39 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
             }
             if resp.secondary_clicked() && app.line_pts.len() > 1 {
                 finish_line(app, false);
+            }
+        }
+        Tool::Nodes => crate::toolsmenu::canvas_nodes(app, &resp, &painter, &xf, hover, tol),
+        Tool::Warp => crate::toolsmenu::canvas_warp(app, &resp, &painter, &xf),
+        Tool::Tangent => crate::toolsmenu::canvas_tangent(app, &resp, &painter, &xf, hover, tol),
+        Tool::TwoPoint => crate::organize::canvas_two_point(app, &resp, &painter, &xf, hover),
+        Tool::Trim => {
+            // the piece under the pointer, unsnapped; Ctrl/Cmd: no joining; Shift: to the selected layer
+            let raw = hover.map(|h| xf.to_world(h));
+            let doc = &app.doc;
+            let hit = raw.and_then(|p| crate::trim::find(&doc.shapes, |s| doc.layers.get(s.layer).is_some_and(|l| l.show), p, tol));
+            if let Some(h) = &hit {
+                let col = if h.grouped { Color32::from_rgb(160, 160, 160) } else { Color32::from_rgb(255, 60, 200) };
+                let pts: Vec<Pos2> = h.piece.iter().map(|p| xf.to_screen(*p)).collect();
+                painter.add(egui::Shape::line(pts, Stroke::new(3.0, col)));
+                app.status = if h.grouped {
+                    crate::i18n::tr("La forma indicata è raggruppata: separala prima di ritagliare").into()
+                } else {
+                    crate::i18n::tr("Tieni premuto Cmd/Ctrl per non unire i pezzi, Maiusc per spostare il tratto sul livello selezionato").into()
+                };
+            }
+            if resp.clicked() {
+                if let Some(h) = hit.filter(|h| !h.grouped) {
+                    app.checkpoint_now();
+                    let piece = crate::trim::cut(&mut app.doc.shapes, &h, mods.command);
+                    if let (true, Some(pl)) = (mods.shift, piece) {
+                        // TrimPathAndSaveClipping: the cut piece goes to the selected layer
+                        let s = Shape::new(0, Geometry::Path { subpaths: vec![pl] }, app.current_layer, 0.0, 0.0);
+                        app.doc.add_shape(s);
+                    }
+                    app.selection.retain(|id| app.doc.shapes.iter().any(|s| s.id == *id));
+                    app.dirty = true;
+                }
             }
         }
         Tool::Text => {
@@ -1035,12 +1091,13 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
         }
         (Drag::Create { start }, Some(cur)) => {
             // the preview follows the same 1:1 and from-centre rules as the shape that will be made
-            let (wa, wb) = drag_box(*start, cur, square_held(&mods), mods.command);
+            let square = square_held(&mods) || app.tool == Tool::Barcode;
+            let (wa, wb) = drag_box(*start, cur, square, mods.command);
             let (a, b) = (xf.to_screen(wa), xf.to_screen(wb));
-            let hint = if square_held(&mods) { crate::i18n::tr("Rapporto 1:1") } else { crate::i18n::tr("Option: rapporto 1:1 · Cmd: dal centro") };
+            let hint = if square { crate::i18n::tr("Rapporto 1:1") } else { crate::i18n::tr("Option: rapporto 1:1 · Cmd: dal centro") };
             painter.text(b + vec2(14.0, 14.0), egui::Align2::LEFT_TOP, hint, egui::FontId::proportional(11.0), crate::theme::p().text_dim);
             match app.tool {
-                Tool::Rect => {
+                Tool::Rect | Tool::Barcode => {
                     painter.rect_stroke(Rect::from_two_pos(a, b), 0.0, Stroke::new(1.0, accent), StrokeKind::Middle);
                 }
                 Tool::Ellipse => {
@@ -1103,6 +1160,8 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
 
     if app.tool == Tool::Measure {
         crate::measure::draw(app, &painter, &xf);
+        let now = ctx.input(|i| i.time);
+        crate::editops::draw_flash(app, &painter, &xf, now);
     }
 
     // laser head position

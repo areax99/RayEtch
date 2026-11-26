@@ -1,2 +1,8 @@
 RayEtch
 Copyright 2026 servimmagine
+
+This product includes Zint (vendor/zint), Copyright (C) 2008-2024 Robin Stuart and contributors,
+under the BSD 3-Clause licence (vendor/zint/LICENSE).
+
+src/barcode_dicts.rs holds marker codebooks from OpenCV's predefined ArUco/AprilTag
+dictionaries, Copyright the OpenCV authors, under the Apache License 2.0.

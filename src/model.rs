@@ -436,6 +436,8 @@ pub struct Device {
     /// "Abilita porta di accesso API permanente" (Estensioni)
     pub api_port_on: bool,
     pub api_port: u16,
+    /// "Impostazione rotazione" (Strumenti laser)
+    pub rotary: crate::lasertools::Rotary,
 }
 
 /// One row of the scan offset table.
@@ -548,6 +550,7 @@ impl Default for Device {
             global_speed_scale: 100.0,
             api_port_on: false,
             api_port: 19000,
+            rotary: Default::default(),
         }
     }
 }
@@ -623,6 +626,12 @@ pub struct Shape {
     /// path's length), so they follow the shape when it is moved, scaled or rotated.
     #[serde(default)]
     pub tabs: Vec<(usize, f64)>,
+    /// A bar code's settings (BarCodeShape): its outlines are rebuilt from these when edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub barcode: Option<crate::barcode::BarcodeSpec>,
+    /// "Blocca le forme selezionate": a locked shape isn't moved, scaled or turned.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -780,7 +789,7 @@ impl Geometry {
 
 impl Shape {
     pub fn new(id: u64, geom: Geometry, layer: usize, x: f64, y: f64) -> Self {
-        Shape { id, geom, layer, tx: x, ty: y, sx: 1.0, sy: 1.0, rot: 0.0, groups: Vec::new(), tabs: Vec::new() }
+        Shape { id, geom, layer, tx: x, ty: y, sx: 1.0, sy: 1.0, rot: 0.0, groups: Vec::new(), tabs: Vec::new(), barcode: None, locked: false }
     }
 
     /// World positions of the manual tabs.
@@ -946,6 +955,12 @@ pub struct Document {
     /// Laser-panel states kept with the project when the settings say so (Impostazioni editor:
     /// "Salva Taglia selezionata / Origine selezione nel progetto", "Salva origine lavoro")
     pub job_state: SavedJobState,
+    /// The variable text counter and merge file (saved with the project, as the original's
+    /// VariableTextManager::WriteTo does).
+    pub vars: crate::vartext::VarText,
+    /// "Mostra note": the project's notes, and whether they open with the file.
+    pub notes: String,
+    pub show_notes_on_open: bool,
 }
 
 /// What a project remembers of the Laser panel; None = not saved with it.
@@ -970,7 +985,7 @@ impl Default for Document {
                 c
             })
             .collect();
-        Document { shapes: Vec::new(), layers, layer_order: Vec::new(), next_id: 1, device: Device::default(), job_state: SavedJobState::default() }
+        Document { shapes: Vec::new(), layers, layer_order: Vec::new(), next_id: 1, device: Device::default(), job_state: SavedJobState::default(), vars: Default::default(), notes: String::new(), show_notes_on_open: false }
     }
 }
 

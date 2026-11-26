@@ -92,7 +92,8 @@ pub struct Prefs {
     pub snap_grid_distance: f64,
     pub click_tolerance_px: f64,
     pub snap_object_distance_px: f64,
-    /// arrow-key moves in mm: with ⌘ (Ctrl), plain, with ⇧
+    /// arrow-key moves in mm (EditWindow::keyPressEvent 0x1009faeac, Preferences +0x14c/+0x150/+0x154):
+    /// `nudge_fine` with ⌘ (Ctrl), `nudge` plain, `nudge_coarse` with ⇧; ⇧⌘ is `nudge` ÷ 10
     pub nudge_fine: f64,
     pub nudge: f64,
     pub nudge_coarse: f64,
@@ -183,8 +184,8 @@ impl Default for Prefs {
             snap_grid_distance: 1.0,
             click_tolerance_px: 3.0,
             snap_object_distance_px: 10.0,
-            nudge_fine: 1.0,
-            nudge: 5.0,
+            nudge_fine: 5.0,
+            nudge: 1.0,
             nudge_coarse: 20.0,
             antialiasing: true,
             filled_rendering: false,
@@ -258,7 +259,13 @@ pub fn with<R>(f: impl FnOnce(&Prefs) -> R) -> R {
 
 impl Prefs {
     pub fn load() -> Self {
-        crate::i18n::load_json(FILE).unwrap_or_default()
+        let mut p: Prefs = crate::i18n::load_json(FILE).unwrap_or_default();
+        // earlier RayEtch builds had the plain and ⌘ steps the other way round (5 and 1 mm)
+        if p.nudge == 5.0 && p.nudge_fine == 1.0 {
+            p.nudge = 1.0;
+            p.nudge_fine = 5.0;
+        }
+        p
     }
 
     pub fn save(&self) {
