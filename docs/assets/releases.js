@@ -8,6 +8,23 @@ const groups=['windows','macos','linux'];
 const arch=name=>/universal/i.test(name)?(it?'Universal (Apple Silicon + Intel)':'Universal (Apple Silicon + Intel)'):/aarch64|arm64/i.test(name)?'ARM64':/x86_64|amd64|x64/i.test(name)?'x86-64':null;
 const device = detectDesktop(navigator);
 
+async function linuxCpu(browser) {
+  // Linux browsers may expose a generic x86_64 user agent on ARM devices.
+  const platformInfo = [browser.platform, browser.userAgent].join(' ');
+  const arm64 = /\b(?:aarch64|arm64)\b/i.test(platformInfo);
+  const arm32 = /\b(?:armv[5-8]l|armhf)\b/i.test(platformInfo);
+  try {
+    const hints = await browser.userAgentData?.getHighEntropyValues?.(['architecture', 'bitness']);
+    if (hints?.bitness === '32' || arm32) return null;
+    if (arm64 || /^(?:aarch64|arm64)$/i.test(hints?.architecture || '')) return 'ARM64';
+    if (hints?.bitness === '64') {
+      if (hints.architecture === 'arm') return 'ARM64';
+      if (hints.architecture === 'x86') return 'x86-64';
+    }
+  } catch { /* Some browsers restrict access to architecture hints. */ }
+  return arm64 && !arm32 ? 'ARM64' : null;
+}
+
 async function detectDesktop(browser) {
   const ua = browser.userAgent || '';
   const hints = browser.userAgentData;
@@ -17,6 +34,7 @@ async function detectDesktop(browser) {
   const platform = hints?.platform || browser.platform || ua;
   const os = /mac/i.test(platform) ? 'macos' : /^win/i.test(platform) ? 'windows' : /linux/i.test(platform) ? 'linux' : null;
   if (!os) return null;
+  if (os === 'linux') return {os, cpu: await linuxCpu(browser)};
 
   let cpu = null;
   if (hints?.getHighEntropyValues) {
@@ -76,6 +94,9 @@ if (button && desktop) {
     }
     button.href = selected.link.href;
     button.textContent = (it ? 'Scarica per ' : 'Download for ') + platformName + ' (' + chip + ') ↓';
+  } else if (desktop.os === 'linux') {
+    button.href = '#assets-linux';
+    button.textContent = it ? 'Scegli il pacchetto Linux ↓' : 'Choose a Linux package ↓';
   }
 }
 
