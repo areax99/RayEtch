@@ -25,6 +25,31 @@ async function linuxCpu(browser) {
   return arm64 && !arm32 ? 'ARM64' : null;
 }
 
+async function macCpu(browser) {
+  try {
+    const hints = await browser.userAgentData?.getHighEntropyValues?.(['architecture']);
+    if (/^(arm|arm64|aarch64)$/i.test(hints?.architecture)) return 'ARM64';
+    if (/^(x86|x86_64|amd64)$/i.test(hints?.architecture)) return 'x86-64';
+  } catch { /* Continue with locally available signals. */ }
+  if (/arm64|aarch64|MacARM/i.test([browser.platform, browser.userAgent].join(' '))) return 'ARM64';
+
+  // Some Mac browsers identify every chip as MacIntel in the user agent.
+  try {
+    const adapter = await browser.gpu?.requestAdapter();
+    const info = adapter?.info;
+    if ((info?.vendor?.toLowerCase() === 'apple' && adapter.features.has('texture-compression-astc')) || /\bApple M\d+/i.test(info?.description)) return 'ARM64';
+  } catch { /* Adapter information may be unavailable. */ }
+  let gl;
+  try {
+    gl = document.createElement('canvas').getContext('webgl');
+    const debug = gl?.getExtension('WEBGL_debug_renderer_info');
+    const renderer = debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : '';
+    if (/\bApple M\d+/i.test(renderer)) return 'ARM64';
+  } catch { /* A generic renderer does not identify the chip. */ }
+  finally { gl?.getExtension('WEBGL_lose_context')?.loseContext(); }
+  return null;
+}
+
 async function detectDesktop(browser) {
   const ua = browser.userAgent || '';
   const hints = browser.userAgentData;
@@ -34,6 +59,7 @@ async function detectDesktop(browser) {
   const platform = hints?.platform || browser.platform || ua;
   const os = /mac/i.test(platform) ? 'macos' : /^win/i.test(platform) ? 'windows' : /linux/i.test(platform) ? 'linux' : null;
   if (!os) return null;
+  if (os === 'macos') return {os, cpu: await macCpu(browser)};
   if (os === 'linux') return {os, cpu: await linuxCpu(browser)};
 
   let cpu = null;
@@ -85,15 +111,35 @@ const desktop = await device;
 const button = document.querySelector('.hero a.btn[href="#downloads"]');
 if (button && desktop) {
   const links = Array.from(section.querySelectorAll('#assets-' + desktop.os + ' a.asset'));
+  function showPackage(link, chip) {
+    const platformName = {macos: 'macOS', windows: 'Windows', linux: 'Linux'}[desktop.os];
+    if (desktop.os === 'macos') chip = chip === 'ARM64' ? 'Apple Silicon' : chip === 'x86-64' ? 'Intel' : 'Universal';
+    button.href = link.href;
+    button.textContent = (it ? 'Scarica per ' : 'Download for ') + platformName + ' (' + chip + ') ↓';
+  }
+  if (desktop.os === 'macos' && !desktop.cpu) {
+    const key = 'rayetch.mac.downloadArchitecture';
+    try { desktop.cpu = localStorage.getItem(key); } catch { /* Storage is optional. */ }
+    for (const link of links) {
+      const chip = arch(link.href.split('/').pop());
+      if (!chip) continue;
+      const label = link.querySelector('span');
+      if (label && chip === 'ARM64') label.textContent = 'Apple Silicon (ARM64)';
+      if (label && chip === 'x86-64') label.textContent = 'Intel (x86-64)';
+      link.addEventListener('click', () => {
+        try { localStorage.setItem(key, chip); } catch { /* The download still works. */ }
+        showPackage(link, chip);
+      });
+    }
+    if (!desktop.cpu && links.length > 1) {
+      button.href = '#assets-macos';
+      button.textContent = it ? 'Scegli il pacchetto macOS ↓' : 'Choose a macOS package ↓';
+      return;
+    }
+  }
   const selected = findPackage(desktop, links, arch);
   if (selected) {
-    const platformName = {macos: 'macOS', windows: 'Windows', linux: 'Linux'}[desktop.os];
-    let chip = selected.cpu;
-    if (desktop.os === 'macos') {
-      chip = /universal/i.test(selected.name) ? 'Universal' : chip === 'ARM64' ? 'Apple Silicon' : 'Intel';
-    }
-    button.href = selected.link.href;
-    button.textContent = (it ? 'Scarica per ' : 'Download for ') + platformName + ' (' + chip + ') ↓';
+    showPackage(selected.link, selected.cpu);
   } else if (desktop.os === 'linux') {
     button.href = '#assets-linux';
     button.textContent = it ? 'Scegli il pacchetto Linux ↓' : 'Choose a Linux package ↓';
