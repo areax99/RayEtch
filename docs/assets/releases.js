@@ -78,11 +78,19 @@ async function detectDesktop(browser) {
   return {os, cpu};
 }
 
+function isWindowsInstaller(name) { return /(?:[-_.](?:setup|installer)\.exe|\.msi)$/i.test(name); }
+
+function preferredWindowsPackage(packages, cpu) {
+  const matches = packages.filter(pkg => cpu && pkg.cpu === cpu);
+  return matches.find(pkg => isWindowsInstaller(pkg.name)) || matches.find(pkg => /\.zip$/i.test(pkg.name));
+}
+
 function findPackage(device, links, architectureOf) {
   const packages = links.map(link => {
     const name = link.href.split('/').pop();
     return {link, name, cpu: architectureOf(name)};
   }).filter(pkg => /\.(zip|exe|msi|dmg|pkg|appimage|tar\.(gz|xz))$/i.test(pkg.name));
+  if (device.os === 'windows') return preferredWindowsPackage(packages, device.cpu);
   const exact = device.cpu && packages.find(pkg => pkg.cpu === device.cpu);
   return exact || (device.os === 'macos' && packages.find(pkg => /universal/i.test(pkg.name)));
 }
@@ -102,8 +110,42 @@ try{
   const target=document.querySelector('#assets-'+group);const assets=allowed.filter(a=>a.name.toLowerCase().includes('-'+group+'-')&&!/\.sha256$|\.sig$|\.txt$/i.test(a.name));
   target.replaceChildren();
   if(!assets.length){const p=document.createElement('p');p.textContent=it?'Nessun pacchetto in questa release.':'No package in this release.';target.append(p);continue;}
-  assets.sort((a,b)=>Number(/universal/i.test(b.name))-Number(/universal/i.test(a.name)));
-  for(const a of assets){const link=document.createElement('a');link.className='asset';link.href=a.browser_download_url;link.title=a.name;const label=document.createElement('span');label.textContent=(arch(a.name)||a.name)+(group==='linux'&&/installer/i.test(a.name)?' · Installer':'');const size=document.createElement('small');size.textContent=(a.size/1e6).toFixed(1)+' MB ↓';link.append(label,size);target.append(link);}
+  if (group === 'windows') {
+    const rank = name => ({'x86-64': 0, ARM64: 1}[arch(name)] ?? 2);
+    assets.sort((a, b) => rank(a.name) - rank(b.name) || Number(isWindowsInstaller(b.name)) - Number(isWindowsInstaller(a.name)) || a.name.localeCompare(b.name));
+  } else assets.sort((a,b)=>Number(/universal/i.test(b.name))-Number(/universal/i.test(a.name)));
+  let previousChip;
+  for (const a of assets) {
+    const chip = arch(a.name);
+    const link = document.createElement('a');
+    link.className = 'asset';
+    link.href = a.browser_download_url;
+    link.title = a.name;
+    const label = document.createElement('span');
+    if (group === 'windows') {
+      if (chip && chip !== previousChip) {
+        const heading = document.createElement('h4');
+        heading.textContent = chip;
+        target.append(heading);
+      }
+      previousChip = chip;
+      if (isWindowsInstaller(a.name)) {
+        const extension = a.name.split('.').pop().toLowerCase();
+        label.textContent = 'Installer (.' + extension + ') · ' + (it ? 'Consigliato' : 'Recommended');
+      } else if (/\.zip$/i.test(a.name)) {
+        label.textContent = it ? 'Versione senza installazione (.zip)' : 'Portable version (.zip)';
+      } else {
+        label.textContent = a.name;
+      }
+      if (chip) link.setAttribute('aria-label', chip + ' · ' + label.textContent);
+    } else {
+      label.textContent = (chip || a.name) + (group === 'linux' && /installer/i.test(a.name) ? ' · Installer' : '');
+    }
+    const size = document.createElement('small');
+    size.textContent = (a.size / 1e6).toFixed(1) + ' MB ↓';
+    link.append(label, size);
+    target.append(link);
+  }
  }
  status.textContent=it?'Versione aggiornata tramite GitHub.':'Release information updated from GitHub.';
 }catch(e){status.textContent=it?'Aggiornamento automatico non disponibile. Sono mostrati i collegamenti verificati della Beta 4; consulta tutte le release per le versioni più recenti.':'Automatic update unavailable. Verified Beta 4 links are shown; check all releases for newer builds.';}
@@ -115,7 +157,11 @@ if (button && desktop) {
     const platformName = {macos: 'macOS', windows: 'Windows', linux: 'Linux'}[desktop.os];
     if (desktop.os === 'macos') chip = chip === 'ARM64' ? 'Apple Silicon' : chip === 'x86-64' ? 'Intel' : 'Universal';
     button.href = link.href;
-    button.textContent = (it ? 'Scarica per ' : 'Download for ') + platformName + ' (' + chip + ') ↓';
+    let action = it ? 'Scarica per ' : 'Download for ';
+    if (desktop.os === 'windows' && isWindowsInstaller(link.href)) {
+      action = it ? 'Scarica l’installer per ' : 'Download the installer for ';
+    }
+    button.textContent = action + platformName + ' (' + chip + ') ↓';
   }
   if (desktop.os === 'macos' && !desktop.cpu) {
     const key = 'rayetch.mac.downloadArchitecture';
@@ -140,6 +186,9 @@ if (button && desktop) {
   const selected = findPackage(desktop, links, arch);
   if (selected) {
     showPackage(selected.link, selected.cpu);
+  } else if (desktop.os === 'windows') {
+    button.href = '#assets-windows';
+    button.textContent = it ? 'Scegli il pacchetto Windows ↓' : 'Choose a Windows package ↓';
   } else if (desktop.os === 'linux') {
     button.href = '#assets-linux';
     button.textContent = it ? 'Scegli il pacchetto Linux ↓' : 'Choose a Linux package ↓';
