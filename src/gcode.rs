@@ -599,6 +599,35 @@ fn fill_lines(rings: &[Polyline], cs: &CutSetting, angle_deg: f64, moves: &mut V
 
 /// Most offset-fill loops per set of shapes (a guard; estimated).
 const OFFSET_FILL_MAX_LOOPS: usize = 10_000;
+/// How far (mm) a point of an Offset Fill loop may sit from the line through its neighbours and
+/// still be dropped (RayEtch's own: well under the beam's width).
+const OFFSET_FILL_SIMPLIFY: f64 = 0.01;
+
+/// Drop the points of a closed ring that lie within `tol` of the straight line between the points
+/// kept around them (one pass, like Douglas–Peucker's corridor), keeping at least a triangle.
+fn thin_ring(pts: &[P2], tol: f64) -> Vec<P2> {
+    if pts.len() <= 3 {
+        return pts.to_vec();
+    }
+    let dist = |p: P2, a: P2, b: P2| {
+        let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
+        let l = vx.hypot(vy);
+        if l < 1e-12 { (p[0] - a[0]).hypot(p[1] - a[1]) } else { ((p[0] - a[0]) * vy - (p[1] - a[1]) * vx).abs() / l }
+    };
+    let mut out: Vec<P2> = vec![pts[0]];
+    let mut i = 1;
+    while i < pts.len() {
+        // stretch the segment from the last kept point as far as every point in between stays close
+        let a = *out.last().unwrap();
+        let mut j = i;
+        while j + 1 < pts.len() && (i..=j).all(|k| dist(pts[k], a, pts[j + 1]) <= tol) {
+            j += 1;
+        }
+        out.push(pts[j]);
+        i = j + 1;
+    }
+    if out.len() < 3 { pts.to_vec() } else { out }
+}
 
 /// Offset fill (type 2, "Generating offset fills...", CutBuilder::RasterizeShapes 0x100bc828c;
 /// the path itself comes from the external acclplanner library): outlines shrunk by the line
@@ -607,11 +636,18 @@ const OFFSET_FILL_MAX_LOOPS: usize = 10_000;
 pub fn offset_fill_loops(rings: &[Polyline], interval: f64) -> Vec<Polyline> {
     let interval = interval.max(0.01);
     let mut loops: Vec<Vec<Polyline>> = Vec::new();
-    // each loop is the one before shrunk by one interval
+    // each loop is the one before shrunk by one interval, then thinned (points closer than
+    // OFFSET_FILL_SIMPLIFY to the line through their neighbours go): without that, round corners
+    // added points at every inner corner on every loop, and a welded shape's loops grew until the
+    // preview hung
     let mut cur: Vec<Polyline> = rings.iter().filter(|p| p.closed && p.pts.len() >= 3).cloned().collect();
     let mut d = interval / 2.0;
     for _ in 0..OFFSET_FILL_MAX_LOOPS {
-        let ring: Vec<Polyline> = crate::offset::offset_paths(&cur, -d, crate::offset::Corner::Round, false).into_iter().filter(|p| p.pts.len() >= 3).collect();
+        let ring: Vec<Polyline> = crate::offset::offset_paths(&cur, -d, crate::offset::Corner::Round, false)
+            .into_iter()
+            .map(|p| Polyline { pts: thin_ring(&p.pts, OFFSET_FILL_SIMPLIFY), closed: true })
+            .filter(|p| p.pts.len() >= 3)
+            .collect();
         if ring.is_empty() {
             break;
         }
@@ -2000,5 +2036,34 @@ mod tests {
         }
         assert_eq!(lens.len(), 4);
         assert!(lens[0] > lens[1] && lens[1] > lens[2] && lens[2] > lens[3] && lens[3] > 0.5, "lens {lens:?}");
+    }
+}
+
+#[cfg(test)]
+mod offset_fill_timing {
+    use super::*;
+
+    /// Offset Fill on plain and welded shapes ends quickly with a bounded number of points (a
+    /// welded shape used to grow its loops without end and hang the preview).
+    #[test]
+    fn time_offset_fill() {
+        let circle = |r: f64, n: usize| Polyline { pts: (0..n).map(|i| { let a = i as f64 / n as f64 * std::f64::consts::TAU; [r * a.cos(), r * a.sin()] }).collect(), closed: true };
+        for (name, rings) in [("rect 100", vec![Polyline { pts: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]], closed: true }]), ("circle r60", vec![circle(60.0, 360)])] {
+            let t = std::time::Instant::now();
+            let l = offset_fill_loops(&rings, 0.1);
+            let pts: usize = l.iter().map(|p| p.pts.len()).sum();
+            println!("{name}: {} loops, {pts} points, {:?}", l.len(), t.elapsed());
+        }
+        // welded shapes (Salda forme / Unione): two circles, and a circle with a square
+        let sq = Polyline { pts: vec![[30.0, -20.0], [90.0, -20.0], [90.0, 40.0], [30.0, 40.0]], closed: true };
+        let c2 = Polyline { pts: circle(40.0, 360).pts.iter().map(|p| [p[0] + 50.0, p[1]]).collect(), closed: true };
+        for (name, a, b) in [("weld 2 circles", vec![circle(40.0, 360)], vec![c2]), ("weld circle+square", vec![circle(40.0, 360)], vec![sq])] {
+            let w: Vec<Polyline> = crate::combine::combine(&a, &b, crate::combine::CombineOp::Union).into_iter().flatten().collect();
+            let t = std::time::Instant::now();
+            let l = offset_fill_loops(&w, 0.1);
+            let pts: usize = l.iter().map(|p| p.pts.len()).sum();
+            println!("{name}: {} rings in, {} loops, {pts} points, {:?}", w.len(), l.len(), t.elapsed());
+            assert!(l.len() > 400 && pts < 200_000, "{name}: {} loops, {pts} points", l.len());
+        }
     }
 }

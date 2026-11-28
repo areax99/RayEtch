@@ -218,6 +218,19 @@ fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::Path
                     }
                 }
             }
+            // RAYETCH_OPEN=offsetpreview (for testing): two circles welded, on an Offset Fill layer, previewed
+            if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("offsetpreview")) {
+                use model::{Geometry, Shape};
+                a.doc.layers[0].mode = model::CutMode::OffsetFill;
+                let c1 = a.doc.add_shape(Shape::new(0, Geometry::Ellipse { rx: 50.0, ry: 50.0 }, 0, 170.0, 200.0));
+                let c2 = a.doc.add_shape(Shape::new(0, Geometry::Ellipse { rx: 50.0, ry: 50.0 }, 0, 240.0, 200.0));
+                // the person's case: the two circles welded into one path ("unisci forme")
+                a.selection = vec![c1, c2];
+                a.weld();
+                let t = std::time::Instant::now();
+                a.open_preview();
+                eprintln!("PREVIEW open {:?}", t.elapsed());
+            }
             // RAYETCH_OPEN=textpath (for testing): a text applied to a circle, slid along it by 40 mm
             if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("textpath")) {
                 use model::{Geometry, Shape};
