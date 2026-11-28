@@ -527,6 +527,10 @@ pub fn refresh_variable(app: &mut crate::app::RayEtch) {
         if let Some(spec) = s.barcode.as_ref().filter(|b| b.eval != crate::vartext::EVAL_NORMAL) {
             s.geom = crate::model::Geometry::Path { subpaths: outline(spec).unwrap_or_default() };
         }
+        // texts set to a variable type (Data/Ora, Unione/CSV, Numero di serie) show the value now
+        if matches!(&s.geom, crate::model::Geometry::Text { style, .. } if style.eval != crate::vartext::EVAL_NORMAL) {
+            s.geom.rebuild_text();
+        }
     }
 }
 

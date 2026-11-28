@@ -198,27 +198,75 @@ pub fn glyphs(text: &str, size: f64, font_name: &str) -> Vec<(f64, f64, Vec<Poly
     out
 }
 
-/// The letters laid out from the first line's baseline (not yet centred), with where each
-/// caret position sits on its line: (x, line), plus the line height, ascender and descender.
+/// The text toolbar's options (reference picture 40; the original's Bold, Italic, Upper Case,
+/// Distort, Welded, HSpace, VSpace, Align X, Align Y, the text type and Offset).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TextStyle {
+    pub bold: bool,
+    pub italic: bool,
+    pub upper: bool,
+    /// "Distorsione": resizing stretches the letters; off, a text keeps its proportions
+    pub distort: bool,
+    /// "Saldato": overlapping letters are joined into one outline
+    pub welded: bool,
+    /// "Spaziatura orizzontale" / "Spaziatura verticale", mm added between letters / lines
+    pub hspace: f64,
+    pub vspace: f64,
+    /// "Allinea X": 0 Sinistra, 1 Centrale, 2 Destra; "Allinea Y": 0 Alto, 1 Centrale, 2 Basso
+    pub align_x: u8,
+    pub align_y: u8,
+    /// the text type (vartext::EVAL_TYPES: Normale, Data/Ora, Unione/CSV, Numero di serie)
+    pub eval: usize,
+    /// "Offset": added to the counter / CSV row for this text
+    pub offset: i64,
+    /// "Applica tracciato al testo": the line the letters follow (in the text's own coordinates);
+    /// the text stays a text, editable, and slides along it
+    #[serde(default)]
+    pub path: Option<Polyline>,
+    /// how far along the path the text is moved, mm ("Offset" while on a path; dragging the text)
+    #[serde(default)]
+    pub path_offset: f64,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle { bold: false, italic: false, upper: false, distort: false, welded: false, hspace: 0.0, vspace: 0.0, align_x: 1, align_y: 1, eval: 0, offset: 0, path: None, path_offset: 0.0 }
+    }
+}
+
+/// Faux italic: letters lean right by 12° (fonts are drawn from their regular face).
+const ITALIC_SLANT: f64 = 0.2126;
+/// Faux bold: each letter grows by this share of the text height.
+const BOLD_GROW: f64 = 0.03;
+
+/// The text a shape shows: upper case and its variable-text value applied.
+pub fn shown_text(text: &str, style: &TextStyle) -> String {
+    let t = if style.eval != 0 { crate::vartext::evaluate(text, style.eval, style.offset) } else { text.to_string() };
+    if style.upper { t.to_uppercase() } else { t }
+}
+
+/// The letters laid out from the first line's baseline, with where each caret position sits on its
+/// line: (x, line), each letter's outlines and line, the line height, ascender and descender.
 struct Laid {
-    paths: Vec<Polyline>,
+    glyphs: Vec<(usize, Vec<Polyline>)>,
     carets: Vec<(f64, usize)>,
     line_h: f64,
     asc: f64,
     desc: f64,
 }
 
-fn lay_out(text: &str, size: f64, font_name: &str) -> Option<Laid> {
+fn lay_out(text: &str, size: f64, font_name: &str, style: &TextStyle) -> Option<Laid> {
     let list = fonts();
     let data = list.iter().find(|f| f.name == font_name).and_then(|f| f.data()).or_else(|| list[0].data());
     let data = data?;
     let face = ttf_parser::Face::parse(&data, 0).ok()?;
     let upem = face.units_per_em() as f64;
     let scale = size / upem;
-    let line_h = (face.ascender() as f64 - face.descender() as f64 + face.line_gap() as f64) * scale;
-    let mut b = Builder { paths: Vec::new(), cur: Vec::new(), last: [0.0, 0.0], scale, ox: 0.0, oy: 0.0 };
+    let line_h = (face.ascender() as f64 - face.descender() as f64 + face.line_gap() as f64) * scale + style.vspace;
     let rtl = crate::prefs::with(|p| p.right_to_left_text);
     let mut carets = Vec::new();
+    let mut glyphs = Vec::new();
     for (li, line) in text.split('\n').enumerate() {
         let mut x = 0.0;
         let y = -(li as f64) * line_h;
@@ -229,55 +277,88 @@ fn lay_out(text: &str, size: f64, font_name: &str) -> Option<Laid> {
         for ch in chars {
             carets.push((x, li));
             let Some(gid) = face.glyph_index(ch) else {
-                x += size * 0.5;
+                x += size * 0.5 + style.hspace;
                 continue;
             };
-            b.ox = x;
-            b.oy = y;
-            let first = b.paths.len();
+            let mut b = Builder { paths: Vec::new(), cur: Vec::new(), last: [0.0, 0.0], scale, ox: x, oy: y };
             face.outline_glyph(gid, &mut b);
             b.flush(true);
-            merge_glyph(&mut b.paths, first);
-            x += face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale;
+            merge_glyph(&mut b.paths, 0);
+            if style.italic {
+                for p in b.paths.iter_mut().flat_map(|p| p.pts.iter_mut()) {
+                    p[0] += (p[1] - y) * ITALIC_SLANT;
+                }
+            }
+            if !b.paths.is_empty() {
+                glyphs.push((li, b.paths));
+            }
+            x += face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale + style.hspace;
         }
         // after the line's last letter (the newline's own position)
         carets.push((x, li));
     }
-    Some(Laid { paths: b.paths, carets, line_h, asc: face.ascender() as f64 * scale, desc: face.descender() as f64 * scale })
+    Some(Laid { glyphs, carets, line_h, asc: face.ascender() as f64 * scale, desc: face.descender() as f64 * scale })
 }
 
-/// The centre the outline is shifted by (so a text's origin is its middle).
-fn centre_of(paths: &[Polyline]) -> Option<P2> {
+fn bounds<'a>(paths: impl Iterator<Item = &'a Polyline>) -> Option<([f64; 2], [f64; 2])> {
     let mut min = [f64::INFINITY; 2];
     let mut max = [f64::NEG_INFINITY; 2];
-    for p in paths.iter().flat_map(|p| p.pts.iter()) {
+    for p in paths.flat_map(|p| p.pts.iter()) {
         min[0] = min[0].min(p[0]);
         min[1] = min[1].min(p[1]);
         max[0] = max[0].max(p[0]);
         max[1] = max[1].max(p[1]);
     }
-    min[0].is_finite().then(|| [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0])
+    min[0].is_finite().then_some((min, max))
 }
 
-/// Where the typing cursor stands before the `index`-th character, in the text's own (centred)
-/// coordinates: the bottom and top of a line from descender to ascender.
-pub fn caret_at(text: &str, size: f64, font_name: &str, index: usize) -> Option<(P2, P2)> {
-    let l = lay_out(text, size, font_name)?;
-    let c = centre_of(&l.paths).unwrap_or([0.0, 0.0]);
-    let (x, li) = *l.carets.get(index.min(l.carets.len().saturating_sub(1)))?;
-    let y = -(li as f64) * l.line_h;
-    Some(([x - c[0], y + l.desc - c[1]], [x - c[0], y + l.asc - c[1]]))
-}
-
-/// The caret position (character index) nearest a point in the text's own (centred)
-/// coordinates: its line first, then the nearest gap between letters on that line.
-pub fn caret_index_at(text: &str, size: f64, font_name: &str, p: P2) -> usize {
-    let Some(l) = lay_out(text, size, font_name) else { return text.chars().count() };
-    let c = centre_of(&l.paths).unwrap_or([0.0, 0.0]);
-    let (x, y) = (p[0] + c[0], p[1] + c[1]);
+/// How the laid-out letters are placed around the text's origin: each line's own shift along X
+/// (Allinea X: its left, middle or right on the origin), then one shift for the whole block
+/// (Allinea Y: the top of the first line, the block's middle, or the last line's baseline).
+fn placement(l: &Laid, style: &TextStyle) -> (Vec<f64>, f64) {
     let lines = l.carets.last().map(|c| c.1 + 1).unwrap_or(1);
+    let mut dx = vec![0.0; lines];
+    for (li, d) in dx.iter_mut().enumerate() {
+        // a line's extent: its letters, or its caret run when it has none (an empty line)
+        let ext = bounds(l.glyphs.iter().filter(|g| g.0 == li).flat_map(|g| g.1.iter())).map(|(a, b)| (a[0], b[0])).unwrap_or_else(|| {
+            let xs: Vec<f64> = l.carets.iter().filter(|c| c.1 == li).map(|c| c.0).collect();
+            (xs.first().copied().unwrap_or(0.0), xs.last().copied().unwrap_or(0.0))
+        });
+        *d = match style.align_x {
+            0 => -ext.0,
+            2 => -ext.1,
+            _ => -(ext.0 + ext.1) / 2.0,
+        };
+    }
+    let dy = match style.align_y {
+        0 => -l.asc,
+        2 => (lines - 1) as f64 * l.line_h,
+        _ => bounds(l.glyphs.iter().flat_map(|g| g.1.iter())).map(|(a, b)| -(a[1] + b[1]) / 2.0).unwrap_or(0.0),
+    };
+    (dx, dy)
+}
+
+/// Where the typing cursor stands before the `index`-th character, in the text's own coordinates:
+/// the bottom and top of a line from descender to ascender.
+pub fn caret_at(text: &str, size: f64, font_name: &str, style: &TextStyle, index: usize) -> Option<(P2, P2)> {
+    let l = lay_out(text, size, font_name, style)?;
+    let (dx, dy) = placement(&l, style);
+    let (x, li) = *l.carets.get(index.min(l.carets.len().saturating_sub(1)))?;
+    let y = -(li as f64) * l.line_h + dy;
+    let x = x + dx[li];
+    Some(([x, y + l.desc], [x, y + l.asc]))
+}
+
+/// The caret position (character index) nearest a point in the text's own coordinates: its line
+/// first, then the nearest gap between letters on that line.
+pub fn caret_index_at(text: &str, size: f64, font_name: &str, style: &TextStyle, p: P2) -> usize {
+    let Some(l) = lay_out(text, size, font_name, style) else { return text.chars().count() };
+    let (dx, dy) = placement(&l, style);
+    let y = p[1] - dy;
+    let lines = dx.len();
     // line li runs from its descender to its ascender around baseline -li·line_h
     let li = (((l.asc - y) / l.line_h).floor().max(0.0) as usize).min(lines - 1);
+    let x = p[0] - dx[li];
     l.carets
         .iter()
         .enumerate()
@@ -287,26 +368,143 @@ pub fn caret_index_at(text: &str, size: f64, font_name: &str, p: P2) -> usize {
         .unwrap_or(text.chars().count())
 }
 
-pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
-    let Some(l) = lay_out(text, size, font_name) else { return Vec::new() };
-    let b = Builder { paths: l.paths, cur: Vec::new(), last: [0.0, 0.0], scale: 1.0, ox: 0.0, oy: 0.0 };
-    // centre
-    let mut min = [f64::INFINITY; 2];
-    let mut max = [f64::NEG_INFINITY; 2];
-    for p in b.paths.iter().flat_map(|p| p.pts.iter()) {
-        min[0] = min[0].min(p[0]);
-        min[1] = min[1].min(p[1]);
-        max[0] = max[0].max(p[0]);
-        max[1] = max[1].max(p[1]);
+/// Outlines (mm, Y up) of a text with its options, placed on the origin by Allinea X / Y.
+pub fn styled_outline(text: &str, size: f64, font_name: &str, style: &TextStyle) -> Vec<Polyline> {
+    if let Some(path) = &style.path {
+        return on_path(text, size, font_name, style, path);
     }
-    if !min[0].is_finite() {
+    let Some(l) = lay_out(text, size, font_name, style) else { return Vec::new() };
+    let (dx, dy) = placement(&l, style);
+    let mut letters: Vec<Vec<Polyline>> = l
+        .glyphs
+        .into_iter()
+        .map(|(li, paths)| paths.into_iter().map(|pl| Polyline { pts: pl.pts.into_iter().map(|p| [p[0] + dx[li], p[1] + dy]).collect(), closed: pl.closed }).collect())
+        .collect();
+    if style.bold {
+        let grow = size * BOLD_GROW;
+        for g in letters.iter_mut() {
+            let thick = crate::offset::offset_paths(g, grow, crate::offset::Corner::Round, false);
+            if !thick.is_empty() {
+                *g = thick;
+            }
+        }
+    }
+    if style.welded {
+        // letter by letter into one outline (each letter's own holes kept)
+        let mut acc: Vec<Polyline> = Vec::new();
+        for g in letters {
+            acc = if acc.is_empty() { g } else { crate::combine::combine(&acc, &g, crate::combine::CombineOp::Union).into_iter().flatten().collect() };
+        }
+        return acc;
+    }
+    letters.into_iter().flatten().collect()
+}
+
+/// A path's points, closed ones back to their start, and the distance along it at each point.
+pub fn path_measure(path: &Polyline) -> (Vec<P2>, Vec<f64>) {
+    let mut pts = path.pts.clone();
+    if path.closed && !pts.is_empty() {
+        pts.push(path.pts[0]);
+    }
+    let mut acc = vec![0.0];
+    for w in pts.windows(2) {
+        acc.push(acc.last().unwrap() + (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]));
+    }
+    (pts, acc)
+}
+
+/// The distance along a path of the point on it nearest `p`.
+pub fn path_distance_at(path: &Polyline, p: P2) -> f64 {
+    let (pts, acc) = path_measure(path);
+    let mut best = (f64::INFINITY, 0.0);
+    for (i, w) in pts.windows(2).enumerate() {
+        let (a, b) = (w[0], w[1]);
+        let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
+        let l2 = (vx * vx + vy * vy).max(1e-12);
+        let t = (((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / l2).clamp(0.0, 1.0);
+        let q = [a[0] + vx * t, a[1] + vy * t];
+        let d = (q[0] - p[0]).hypot(q[1] - p[1]);
+        if d < best.0 {
+            best = (d, acc[i] + t * l2.sqrt());
+        }
+    }
+    best.1
+}
+
+/// Letters set along a path: each letter's middle on the path, turned to it. Allinea X places
+/// the text at the path's start, middle or end, "Offset" slides it further along; Allinea Y sets
+/// the letters on the path by their top, middle or baseline. A closed path wraps around.
+fn on_path(text: &str, size: f64, font_name: &str, style: &TextStyle, path: &Polyline) -> Vec<Polyline> {
+    let (pts, acc) = path_measure(path);
+    let total = *acc.last().unwrap_or(&0.0);
+    if pts.len() < 2 || total <= 0.0 {
         return Vec::new();
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0];
-    b.paths
-        .into_iter()
-        .map(|pl| Polyline { pts: pl.pts.into_iter().map(|p| [p[0] - c[0], p[1] - c[1]]).collect(), closed: pl.closed })
-        .collect()
+    let gl = glyphs(text, size, font_name);
+    let n = gl.len();
+    let width = gl.last().map(|g| g.0 + g.1).unwrap_or(0.0) + style.hspace * n.saturating_sub(1) as f64;
+    let start = match style.align_x {
+        0 => 0.0,
+        2 => total - width,
+        _ => (total - width) / 2.0,
+    } + style.path_offset;
+    let at = |d: f64| -> Option<(P2, f64)> {
+        let d = if path.closed { d.rem_euclid(total) } else { d };
+        if !(0.0..=total).contains(&d) {
+            return None;
+        }
+        let i = acc.windows(2).position(|w| d <= w[1]).unwrap_or(acc.len().saturating_sub(2));
+        let (a, b) = (pts[i], pts[i + 1]);
+        let f = (d - acc[i]) / (acc[i + 1] - acc[i]).max(1e-12);
+        Some(([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], (b[1] - a[1]).atan2(b[0] - a[0])))
+    };
+    // vertical placement of the letters against the path
+    let lift = match style.align_y {
+        0 => -size * 0.72,
+        2 => 0.0,
+        _ => -size * 0.36,
+    };
+    let mut letters: Vec<Vec<Polyline>> = Vec::new();
+    for (k, (x, adv, polys)) in gl.into_iter().enumerate() {
+        let mid = start + x + style.hspace * k as f64 + adv / 2.0;
+        let Some((c, ang)) = at(mid) else { continue };
+        let (sn, cs) = ang.sin_cos();
+        let mut g = Vec::new();
+        for p in polys {
+            let q: Vec<P2> = p
+                .pts
+                .iter()
+                .map(|q| {
+                    let ly = q[1] + lift;
+                    let lx = q[0] - adv / 2.0 + if style.italic { ly * ITALIC_SLANT } else { 0.0 };
+                    [c[0] + lx * cs - ly * sn, c[1] + lx * sn + ly * cs]
+                })
+                .collect();
+            g.push(Polyline { pts: q, closed: p.closed });
+        }
+        letters.push(g);
+    }
+    if style.bold {
+        for g in letters.iter_mut() {
+            let thick = crate::offset::offset_paths(g, size * BOLD_GROW, crate::offset::Corner::Round, false);
+            if !thick.is_empty() {
+                *g = thick;
+            }
+        }
+    }
+    if style.welded {
+        let mut acc2: Vec<Polyline> = Vec::new();
+        for g in letters {
+            acc2 = if acc2.is_empty() { g } else { crate::combine::combine(&acc2, &g, crate::combine::CombineOp::Union).into_iter().flatten().collect() };
+        }
+        return acc2;
+    }
+    letters.into_iter().flatten().collect()
+}
+
+/// Outlines with the default options (centred on the origin).
+pub fn text_outline(text: &str, size: f64, font_name: &str) -> Vec<Polyline> {
+    styled_outline(text, size, font_name, &TextStyle::default())
 }
 
 #[cfg(test)]
@@ -319,9 +517,65 @@ mod caret_tests {
         let font = fonts()[0].name.clone();
         let text = "Ciao\nmondo";
         for i in 0..=text.chars().count() {
-            let (a, b) = caret_at(text, 25.0, &font, i).unwrap();
+            let st = TextStyle::default();
+            let (a, b) = caret_at(text, 25.0, &font, &st, i).unwrap();
             let mid = [a[0], (a[1] + b[1]) / 2.0];
-            assert_eq!(caret_index_at(text, 25.0, &font, mid), i, "caret {i}");
+            assert_eq!(caret_index_at(text, 25.0, &font, &st, mid), i, "caret {i}");
         }
+    }
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+
+    fn bx(p: &[Polyline]) -> ([f64; 2], [f64; 2]) {
+        bounds(p.iter()).unwrap()
+    }
+
+    /// Allinea X / Y put the text's left / top edge on the origin; Saldato joins overlapping letters;
+    /// spacing widens the text; italic leans it.
+    #[test]
+    fn options_shape_the_outline() {
+        let font = fonts()[0].name.clone();
+        let base = TextStyle::default();
+        let plain = styled_outline("HH", 20.0, &font, &base);
+        let (a, b) = bx(&plain);
+        assert!((a[0] + b[0]).abs() < 1e-6 && (a[1] + b[1]).abs() < 1e-6, "centred");
+        let left = styled_outline("HH", 20.0, &font, &TextStyle { align_x: 0, ..base.clone() });
+        assert!(bx(&left).0[0].abs() < 1e-6);
+        let wide = styled_outline("HH", 20.0, &font, &TextStyle { hspace: 5.0, ..base.clone() });
+        assert!((bx(&wide).1[0] - bx(&wide).0[0]) - (b[0] - a[0]) > 4.9);
+        // letters pushed onto each other: welded is one outline, not welded keeps two
+        let tight = TextStyle { hspace: -8.0, ..base.clone() };
+        let apart = styled_outline("HH", 20.0, &font, &tight).len();
+        let joined = styled_outline("HH", 20.0, &font, &TextStyle { welded: true, ..tight }).len();
+        assert!(joined < apart, "{joined} < {apart}");
+        let it = styled_outline("H", 20.0, &font, &TextStyle { italic: true, ..base.clone() });
+        let up = styled_outline("H", 20.0, &font, &base);
+        assert!(bx(&it).1[0] - bx(&it).0[0] > bx(&up).1[0] - bx(&up).0[0]);
+        assert_eq!(shown_text("ciao", &TextStyle { upper: true, ..base }), "CIAO");
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    /// Letters follow the path (a straight line along X here) and the offset slides them along it;
+    /// a point is found back at its distance along the path.
+    #[test]
+    fn text_follows_and_slides_along_path() {
+        let font = fonts()[0].name.clone();
+        let path = Polyline { pts: vec![[0.0, 0.0], [200.0, 0.0]], closed: false };
+        let mut st = TextStyle { path: Some(path.clone()), align_x: 0, align_y: 2, ..TextStyle::default() };
+        let a = styled_outline("AB", 10.0, &font, &st);
+        let (amin, _) = bounds(a.iter()).unwrap();
+        assert!(amin[0] >= -0.5 && amin[0] < 2.0, "starts at the path's start: {amin:?}");
+        st.path_offset = 50.0;
+        let b = styled_outline("AB", 10.0, &font, &st);
+        let (bmin, _) = bounds(b.iter()).unwrap();
+        assert!((bmin[0] - amin[0] - 50.0).abs() < 1e-6, "slid by the offset");
+        assert!((path_distance_at(&path, [73.0, 4.0]) - 73.0).abs() < 1e-9);
     }
 }

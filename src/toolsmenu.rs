@@ -278,52 +278,32 @@ impl RayEtch {
             self.status = tr("Seleziona anche il tracciato da seguire.").into();
             return;
         };
-        let Geometry::Text { text, size, font, .. } = &t.geom else { return };
-        let mut pts = path.pts.clone();
-        if path.closed {
-            pts.push(path.pts[0]);
+        // the text stays a text (editable, its options kept) and follows a copy of the path; the
+        // path itself stays where it is, as in the original
+        let mut t = (*t).clone();
+        if let Geometry::Text { size, style, .. } = &mut t.geom {
+            *size *= t.sy.abs().max(1e-6);
+            style.path = Some(path);
+            style.path_offset = 0.0;
         }
-        let mut acc = vec![0.0];
-        for w in pts.windows(2) {
-            acc.push(acc.last().unwrap() + (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]));
-        }
-        let total = *acc.last().unwrap();
-        let at = |d: f64| -> (P2, f64) {
-            let d = d.clamp(0.0, total);
-            let i = acc.windows(2).position(|w| d <= w[1]).unwrap_or(acc.len().saturating_sub(2));
-            let (a, b) = (pts[i], pts[i + 1]);
-            let l = (acc[i + 1] - acc[i]).max(1e-12);
-            let f = (d - acc[i]) / l;
-            ([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], (b[1] - a[1]).atan2(b[0] - a[0]))
-        };
-        let mut out = Vec::new();
-        for (x, adv, polys) in crate::text::glyphs(text, *size * t.sy.abs().max(1e-6), font) {
-            let mid = x + adv / 2.0;
-            if mid > total {
-                break;
-            }
-            let (c, ang) = at(mid);
-            let (sn, cs) = ang.sin_cos();
-            for p in polys {
-                let q: Vec<P2> = p.pts.iter().map(|q| {
-                    let (lx, ly) = (q[0] - adv / 2.0, q[1]);
-                    [c[0] + lx * cs - ly * sn, c[1] + lx * sn + ly * cs]
-                }).collect();
-                out.push(Polyline { pts: q, closed: p.closed });
-            }
-        }
-        if out.is_empty() {
+        t.tx = 0.0;
+        t.ty = 0.0;
+        t.sx = 1.0;
+        t.sy = 1.0;
+        t.rot = 0.0;
+        t.geom.rebuild_text();
+        if t.geom.local_paths().is_empty() {
             self.status = tr("Il tracciato è troppo corto per il testo.").into();
             return;
         }
         self.checkpoint_now();
-        let layer = t.layer;
         let tid = t.id;
-        self.doc.shapes.retain(|s| s.id != tid);
-        let id = self.doc.add_shape(Shape::new(0, Geometry::Path { subpaths: out }, layer, 0.0, 0.0));
-        self.selection = vec![id];
+        if let Some(s) = self.doc.find_mut(tid) {
+            *s = t;
+        }
+        self.selection = vec![tid];
         self.dirty = true;
-        self.status = tr("Testo applicato al tracciato").into();
+        self.status = tr("Testo applicato al tracciato: trascinalo per farlo scorrere lungo il tracciato").into();
     }
 
     /// "Ritaglia immagine": a picture cut to the selected closed shape's box, white outside it.

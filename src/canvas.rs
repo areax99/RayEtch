@@ -376,8 +376,9 @@ fn snap_point(app: &RayEtch, p: P2) -> P2 {
 /// The character a click on a text lands before (None when it isn't a text).
 fn caret_at_point(app: &RayEtch, id: u64, p: P2) -> Option<usize> {
     let s = app.doc.find(id)?;
-    let Geometry::Text { text, size, font, .. } = &s.geom else { return None };
-    Some(crate::text::caret_index_at(text, *size, font, s.to_local(p)))
+    let Geometry::Text { text, size, font, style, .. } = &s.geom else { return None };
+    let t = if style.upper { text.to_uppercase() } else { text.clone() };
+    Some(crate::text::caret_index_at(&t, *size, font, style, s.to_local(p)))
 }
 
 pub fn drag_box(start: P2, cur: P2, square: bool, centred: bool) -> (P2, P2) {
@@ -650,6 +651,34 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                                 }
                             }
                         }
+                        // a text on a path, dragged on its own, slides along the path (as in the original)
+                        Drag::Move { start, orig }
+                            if orig.len() == 1 && matches!(&orig[0].geom, Geometry::Text { style, .. } if style.path.is_some()) =>
+                        {
+                            let (o, start) = (orig[0].clone(), *start);
+                            if let Geometry::Text { style, .. } = &o.geom
+                                && let Some(path) = &style.path
+                            {
+                                let mut moved = crate::text::path_distance_at(path, o.to_local(cur)) - crate::text::path_distance_at(path, o.to_local(start));
+                                // a closed path: crossing its start is a short step, not a whole turn back
+                                if path.closed {
+                                    let total = *crate::text::path_measure(path).1.last().unwrap_or(&0.0);
+                                    if total > 0.0 {
+                                        moved = (moved + total / 2.0).rem_euclid(total) - total / 2.0;
+                                    }
+                                }
+                                let off = style.path_offset + moved;
+                                app.checkpoint(frame);
+                                if let Some(s) = app.doc.find_mut(o.id) {
+                                    *s = o.clone();
+                                    if let Geometry::Text { style, .. } = &mut s.geom {
+                                        style.path_offset = off;
+                                    }
+                                    s.geom.rebuild_text();
+                                }
+                                app.text_style.path_offset = off;
+                            }
+                        }
                         Drag::Move { start, orig } => {
                             let mut dx = cur[0] - start[0];
                             let mut dy = cur[1] - start[1];
@@ -687,8 +716,10 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
                             let mut fy = if handle == 3 || handle == 7 { 1.0 } else { factor(cur[1], hp[handle][1], anchor[1]) };
                             let corner = handle % 2 == 0;
                             // proportional only while Option (Alt) is held, as the person asked
-                            if corner && mods.alt {
-                                let f = fx.max(fy);
+                            // a text with "Distorsione" off keeps its proportions (letters never stretch)
+                            let keep_text = orig.iter().any(|o| matches!(&o.geom, Geometry::Text { style, .. } if !style.distort));
+                            if (corner && mods.alt) || keep_text {
+                                let f = if !corner { if handle == 1 || handle == 5 { fy } else { fx } } else { fx.max(fy) };
                                 fx = f;
                                 fy = f;
                             }
@@ -1030,8 +1061,10 @@ pub fn canvas(app: &mut RayEtch, ui: &mut egui::Ui) {
     // itself so it reads as editing on the canvas, as the original does; it blinks every half second
     if let Some((id, index)) = app.text_caret
         && let Some(s) = app.doc.find(id)
-        && let Geometry::Text { text, size, font, .. } = &s.geom
-        && let Some((a, b)) = crate::text::caret_at(text, *size, font, index)
+        && let Geometry::Text { text, size, font, style, .. } = &s.geom
+        && style.eval == 0
+        && style.path.is_none()
+        && let Some((a, b)) = crate::text::caret_at(&if style.upper { text.to_uppercase() } else { text.clone() }, *size, font, style, index)
     {
         let on = (ctx.input(|i| i.time) * 2.0) as i64 % 2 == 0;
         if on {

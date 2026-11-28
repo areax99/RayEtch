@@ -218,6 +218,23 @@ fn make_app(cc: &eframe::CreationContext<'_>, screenshot: Option<std::path::Path
                     }
                 }
             }
+            // RAYETCH_OPEN=textpath (for testing): a text applied to a circle, slid along it by 40 mm
+            if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("textpath")) {
+                use model::{Geometry, Shape};
+                let c = a.doc.add_shape(Shape::new(0, Geometry::Ellipse { rx: 60.0, ry: 60.0 }, 0, 200.0, 200.0));
+                a.new_text = "RayEtch sul cerchio".into();
+                let t = a.make_text_shape([200.0, 200.0]);
+                a.selection = vec![t, c];
+                a.text_on_path();
+                if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("slide"))
+                    && let Some(s) = a.doc.find_mut(t)
+                {
+                    if let Geometry::Text { style, .. } = &mut s.geom {
+                        style.path_offset = 40.0;
+                    }
+                    s.geom.rebuild_text();
+                }
+            }
             // RAYETCH_OPEN=nest (for testing): scattered shapes nested by their real outlines
             if std::env::var("RAYETCH_OPEN").is_ok_and(|v| v.contains("nest")) {
                 use model::{Geometry, Shape};

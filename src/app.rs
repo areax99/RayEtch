@@ -318,6 +318,8 @@ pub struct RayEtch {
     pub text_caret: Option<(u64, usize)>,
     /// where the cursor goes when the Testo box takes it: the clicked spot, or None for all the text selected
     pub focus_text_at: Option<usize>,
+    /// the text toolbar's options for new texts (and the selected one)
+    pub text_style: crate::text::TextStyle,
     /// Width/height scale boxes in % (QXY_ValueChanged 0x100c540e0: factor = value / 100).
     pub scale_pct: [f64; 2],
     pub status: String,
@@ -682,6 +684,7 @@ impl RayEtch {
             focus_text_box: false,
             text_caret: None,
             focus_text_at: None,
+            text_style: Default::default(),
             scale_pct: [100.0, 100.0],
             status: tr("Pronto").into(),
             screenshot: screenshot.map(|path| ScreenshotState { path, frames: 0, requested: false, image: Arc::new(Mutex::new(None)) }),
@@ -1933,10 +1936,13 @@ impl RayEtch {
     }
 
     pub fn make_text_shape(&mut self, at: P2) -> u64 {
-        let outline = crate::text::text_outline(&self.new_text, self.text_size, &self.text_font);
+        // a new text starts straight, even if the last text picked followed a path
+        self.text_style.path = None;
+        self.text_style.path_offset = 0.0;
+        let outline = crate::text::styled_outline(&crate::text::shown_text(&self.new_text, &self.text_style), self.text_size, &self.text_font, &self.text_style);
         let s = Shape::new(
             0,
-            Geometry::Text { text: self.new_text.clone(), size: self.text_size, font: self.text_font.clone(), outline },
+            Geometry::Text { text: self.new_text.clone(), size: self.text_size, font: self.text_font.clone(), outline, style: self.text_style.clone() },
             self.current_layer,
             at[0],
             at[1],

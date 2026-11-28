@@ -467,7 +467,7 @@ fn add_label_anchored(doc: &mut Document, text: &str, height: f64, layer: usize,
         Anchor::End => b.max[0],
     };
     let local = [along, b.center()[1]];
-    let mut s = Shape::new(0, Geometry::Text { text: text.into(), size: height, font, outline }, layer, 0.0, 0.0);
+    let mut s = Shape::new(0, Geometry::Text { text: text.into(), size: height, font, outline, style: Default::default() }, layer, 0.0, 0.0);
     s.rot = rot;
     let w = s.to_world(local);
     s.tx = at[0] - w[0];

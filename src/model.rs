@@ -603,7 +603,15 @@ pub enum Geometry {
     /// a dual star (`middle` Some) has a third ring at `middle` × radius.
     Star { points: u32, rx: f64, ry: f64, inner: f64, middle: Option<f64> },
     Path { subpaths: Vec<Polyline> },
-    Text { text: String, size: f64, font: String, outline: Vec<Polyline> },
+    Text {
+        text: String,
+        size: f64,
+        font: String,
+        outline: Vec<Polyline>,
+        /// the text toolbar's options (bold, spacing, alignment, variable text…)
+        #[serde(default)]
+        style: crate::text::TextStyle,
+    },
     Image { w: f64, h: f64, px_w: u32, px_h: u32, gray: Vec<u8> },
 }
 
@@ -755,6 +763,13 @@ pub fn star_pts(points: u32, rx: f64, ry: f64, inner: f64, middle: Option<f64>) 
 }
 
 impl Geometry {
+    /// A text's outlines made again from its words, size, font and options.
+    pub fn rebuild_text(&mut self) {
+        if let Geometry::Text { text, size, font, outline, style } = self {
+            *outline = crate::text::styled_outline(&crate::text::shown_text(text, style), *size, font, style);
+        }
+    }
+
     /// Outline in local coordinates.
     pub fn local_paths(&self) -> Vec<Polyline> {
         match self {

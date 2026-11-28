@@ -953,16 +953,37 @@ fn nb_label(ui: &mut egui::Ui, text: &str) {
 }
 
 fn nb_field(ui: &mut egui::Ui, w: f32, dv: egui::DragValue<'_>) -> egui::Response {
-    ui.add_sized(vec2(w, NB_ROW), dv)
+    ui.add_sized(vec2(w * NB_FIELD_SCALE, NB_ROW), dv)
+}
+
+/// The bar's fields are this much narrower than they used to be, and its gaps smaller, so the
+/// shape's numbers and the text options fit one bar (the original packs them the same way).
+const NB_FIELD_SCALE: f32 = 0.76;
+const NB_SPACING: f32 = 5.0;
+/// Type size inside the bar (the original's toolbar text is small).
+const NB_FONT: f32 = 11.5;
+
+fn compact_bar_style(ui: &mut egui::Ui) {
+    let st = ui.style_mut();
+    for (ts, f) in st.text_styles.iter_mut() {
+        if matches!(ts, egui::TextStyle::Body | egui::TextStyle::Button | egui::TextStyle::Monospace) {
+            f.size = NB_FONT;
+        }
+    }
+    st.spacing.button_padding = vec2(4.0, 2.0);
 }
 
 pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
     let frame_nr = ui.ctx().cumulative_frame_nr();
     let bar_h = NB_ROW * 2.0 + NB_GAP;
     egui::Panel::top("numeric").frame(top_frame().fill(crate::theme::p().panel).inner_margin(egui::Margin::symmetric(10, 6))).show(ui, |ui| {
-        // every group is exactly two rows tall and starts at the top, so labels and fields line up
+        // every group is exactly two rows tall and starts at the top, so labels and fields line up;
+        // one bar holds the shape's numbers and the text options, as in the original (picture 40):
+        // compact type and fields, and when the window is narrower than the bar it scrolls sideways
+        egui::ScrollArea::horizontal().id_salt("numeric_scroll").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+        compact_bar_style(ui);
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.spacing_mut().item_spacing.x = NB_SPACING;
             ui.spacing_mut().interact_size.y = NB_ROW;
             let b = app.doc.bbox_of(&app.selection);
             let has = b.is_valid();
@@ -984,7 +1005,7 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
             // a typed value counts on Enter / leaving the box, a dragged one when the drag ends
             let committed = |r: &egui::Response| r.drag_stopped() || (r.changed() && !r.dragged());
             ui.add_enabled_ui(has, |ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.spacing_mut().item_spacing.x = NB_SPACING;
                 nb_grid("pos").show(ui, |ui| {
                     nb_label(ui, "PosX");
                     let rx = nb_field(ui, 92.0, crate::i18n::dv(&mut x).speed(0.1).max_decimals(3).suffix(" mm"));
@@ -1088,17 +1109,27 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 });
             });
             anchor_grid(ui, &mut app.anchor, "anchor");
-            ui.add(egui::Separator::default().vertical().spacing(8.0));
+            ui.add(egui::Separator::default().vertical().spacing(6.0));
+            // "Lati": the polygon and star tools' number of sides, only while one of them is in use
+            if matches!(app.tool, Tool::Polygon | Tool::Star | Tool::DualStar) || matches!(app.shape_tool, Tool::Polygon) && app.tool == app.shape_tool {
+                nb_grid("sides").show(ui, |ui| {
+                    nb_label(ui, tr("Lati"));
+                    nb_field(ui, 50.0, crate::i18n::dv(&mut app.polygon_sides).range(3..=64)).on_hover_text(tr("Lati del poligono"));
+                    ui.end_row();
+                });
+            }
+            ui.add(egui::Separator::default().vertical().spacing(6.0));
             // text options, like the original's text toolbar
             let mut sel_text: Option<u64> = None;
             if app.selection.len() == 1 {
                 if let Some(s) = app.doc.find(app.selection[0]) {
-                    if let Geometry::Text { text, size, font, .. } = &s.geom {
+                    if let Geometry::Text { text, size, font, style, .. } = &s.geom {
                         sel_text = Some(s.id);
                         if app.tool == Tool::Select && app.rot_for == app.selection && !ui.ctx().egui_wants_keyboard_input() {
                             app.new_text = text.clone();
                             app.text_size = *size;
                             app.text_font = font.clone();
+                            app.text_style = style.clone();
                         }
                     }
                 }
@@ -1106,7 +1137,7 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
             let mut changed = false;
             nb_grid("textopts").show(ui, |ui| {
                 nb_label(ui, tr("Carattere"));
-                egui::ComboBox::from_id_salt("font").width(170.0).selected_text(app.text_font.clone()).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("font").width(158.0).selected_text(app.text_font.clone()).show_ui(ui, |ui| {
                     for f in crate::text::fonts() {
                         if ui.selectable_label(app.text_font == f.name, &f.name).clicked() {
                             app.text_font = f.name.clone();
@@ -1116,54 +1147,121 @@ pub fn numeric_bar(app: &mut RayEtch, ui: &mut egui::Ui) {
                 });
                 ui.end_row();
                 nb_label(ui, tr("Altezza"));
-                changed |= nb_field(ui, 92.0, crate::i18n::dv(&mut app.text_size).speed(0.2).range(0.5..=1000.0).suffix(" mm")).changed();
+                // the Testo box beside the height, so the whole text bar fits the one row
+                ui.horizontal(|ui| {
+                    changed |= nb_field(ui, 80.0, crate::i18n::dv(&mut app.text_size).speed(0.2).range(0.5..=1000.0).suffix(" mm")).changed();
+                    let out = egui::TextEdit::singleline(&mut app.new_text).hint_text(tr("Testo")).align(egui::Align2::LEFT_CENTER).desired_width(100.0).min_size(vec2(100.0, NB_ROW)).show(ui);
+                    changed |= out.response.changed();
+                    // typing in here edits the selected text on the canvas, where a cursor shows the spot
+                    app.text_caret = match (sel_text, out.response.has_focus(), out.cursor_range) {
+                        (Some(id), true, Some(r)) => Some((id, r.primary.index.into())),
+                        _ => None,
+                    };
+                    // a text picked for editing on the canvas: the cursor goes in here with all of it selected
+                    if std::mem::take(&mut app.focus_text_box) {
+                        // the box shows the picked text before it's selected for typing over
+                        if let Some(id) = sel_text
+                            && let Some(Geometry::Text { text, size, font, style, .. }) = app.doc.find(id).map(|s| &s.geom)
+                        {
+                            app.new_text = text.clone();
+                            app.text_size = *size;
+                            app.text_font = font.clone();
+                            app.text_style = style.clone();
+                        }
+                        out.response.request_focus();
+                        let mut st = out.state;
+                        let n = app.new_text.chars().count();
+                        let range = match app.focus_text_at.take() {
+                            // clicked on the canvas: the cursor at that spot
+                            Some(i) => egui::text::CCursorRange::one(egui::text::CCursor::new(i.min(n))),
+                            None => egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n)),
+                        };
+                        st.cursor.set_char_range(Some(range));
+                        st.store(ui.ctx(), out.response.id);
+                    }
+                });
                 ui.end_row();
             });
-            nb_grid("textopts2").show(ui, |ui| {
-                nb_label(ui, tr("Testo"));
-                let out = egui::TextEdit::singleline(&mut app.new_text).align(egui::Align2::LEFT_CENTER).desired_width(150.0).min_size(vec2(150.0, NB_ROW)).show(ui);
-                changed |= out.response.changed();
-                // typing in here edits the selected text on the canvas, where a cursor shows the spot
-                app.text_caret = match (sel_text, out.response.has_focus(), out.cursor_range) {
-                    (Some(id), true, Some(r)) => Some((id, r.primary.index.into())),
-                    _ => None,
-                };
-                // a text picked for editing on the canvas: the cursor goes in here with all of it selected
-                if std::mem::take(&mut app.focus_text_box) {
-                    // the box shows the picked text before it's selected for typing over
-                    if let Some(id) = sel_text
-                        && let Some(Geometry::Text { text, size, font, .. }) = app.doc.find(id).map(|s| &s.geom)
-                    {
-                        app.new_text = text.clone();
-                        app.text_size = *size;
-                        app.text_font = font.clone();
+            // Grassetto, Maiuscolo, Saldato / Corsivo, Distorsione (picture 40)
+            {
+                let st = &mut app.text_style;
+                egui::Grid::new("textflags").num_columns(3).spacing(vec2(8.0, NB_GAP)).min_row_height(NB_ROW).show(ui, |ui| {
+                    changed |= switch(ui, &mut st.bold, tr("Grassetto")).changed();
+                    changed |= switch(ui, &mut st.upper, tr("Maiuscolo")).changed();
+                    changed |= switch(ui, &mut st.welded, tr("Saldato")).changed();
+                    ui.end_row();
+                    changed |= switch(ui, &mut st.italic, tr("Corsivo")).changed();
+                    changed |= switch(ui, &mut st.distort, tr("Distorsione")).on_hover_text(tr("Acceso: ridimensionando il testo le lettere si allungano; spento: il testo mantiene le proporzioni")).changed();
+                    ui.end_row();
+                });
+            }
+            ui.add(egui::Separator::default().vertical().spacing(6.0));
+            // Spaziatura orizzontale / verticale, Allinea X / Y, the text type and Offset (picture 40)
+            nb_grid("textspace").show(ui, |ui| {
+                let st = &mut app.text_style;
+                nb_label(ui, tr("Spaziatura orizzontale"));
+                changed |= nb_field(ui, 70.0, crate::i18n::dv(&mut st.hspace).speed(0.05).range(-1000.0..=1000.0).fixed_decimals(2)).changed();
+                nb_label(ui, tr("Allinea X"));
+                let xs = [tr("Sinistra"), tr("Centrale"), tr("Destra")];
+                egui::ComboBox::from_id_salt("text_align_x").width(72.0).selected_text(xs[(st.align_x as usize).min(2)]).show_ui(ui, |ui| {
+                    for (i, n) in xs.iter().enumerate() {
+                        changed |= ui.selectable_value(&mut st.align_x, i as u8, *n).changed();
                     }
-                    out.response.request_focus();
-                    let mut st = out.state;
-                    let n = app.new_text.chars().count();
-                    let range = match app.focus_text_at.take() {
-                        // clicked on the canvas: the cursor at that spot
-                        Some(i) => egui::text::CCursorRange::one(egui::text::CCursor::new(i.min(n))),
-                        None => egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(n)),
-                    };
-                    st.cursor.set_char_range(Some(range));
-                    st.store(ui.ctx(), out.response.id);
+                });
+                let names = crate::vartext::EVAL_TYPES;
+                let before = st.eval;
+                egui::ComboBox::from_id_salt("text_eval").width(86.0).selected_text(tr(names[st.eval.min(names.len() - 1)])).show_ui(ui, |ui| {
+                    for (i, n) in names.iter().enumerate() {
+                        changed |= ui.selectable_value(&mut st.eval, i, tr(n)).changed();
+                    }
+                })
+                .response
+                .on_hover_text(tr("Testo variabile: il testo è un modello che RayEtch riempie da solo a ogni lavoro.\nData/Ora: la data e l'ora attuali (es. dd/MM/yyyy hh:mm; il testo fisso va tra apici, es. 'Lotto' dd/MM).\nNumero di serie: un numero che cresce a ogni lavoro (es. 000d → 0001, 0002…).\nUnione/CSV: una colonna della riga attuale di un file CSV (%0 la prima, %1 la seconda…).\nContatore e file CSV si impostano nella scheda Testo variabile."));
+                // a text that isn't a pattern for the chosen type yet gets one to start from, so its
+                // letters aren't read as codes ("RayEtch" would turn into numbers with Data/Ora)
+                if st.eval != before && !crate::vartext::looks_like_pattern(&app.new_text, st.eval) {
+                    app.new_text = crate::vartext::starter_pattern(st.eval).to_string();
                 }
                 ui.end_row();
-                nb_label(ui, tr("Lati"));
-                nb_field(ui, 60.0, crate::i18n::dv(&mut app.polygon_sides).range(3..=64)).on_hover_text(tr("Lati del poligono"));
+                nb_label(ui, tr("Spaziatura verticale"));
+                changed |= nb_field(ui, 70.0, crate::i18n::dv(&mut st.vspace).speed(0.05).range(-1000.0..=1000.0).fixed_decimals(2)).changed();
+                nb_label(ui, tr("Allinea Y"));
+                let ys = [tr("Alto"), tr("Centrale"), tr("Basso")];
+                egui::ComboBox::from_id_salt("text_align_y").width(72.0).selected_text(ys[(st.align_y as usize).min(2)]).show_ui(ui, |ui| {
+                    for (i, n) in ys.iter().enumerate() {
+                        changed |= ui.selectable_value(&mut st.align_y, i as u8, *n).changed();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    // "Offset testo" is only the key of its short translations (Spanish "Despl."); Italian shows "Offset"
+                    nb_label(ui, if crate::i18n::current() == crate::i18n::Lang::It { "Offset" } else { tr("Offset testo") });
+                    // on a path: how far along it the text sits (mm); otherwise the variable-text offset
+                    if st.path.is_some() {
+                        changed |= ui
+                            .add(crate::i18n::dv(&mut st.path_offset).speed(0.2).fixed_decimals(1).suffix(" mm"))
+                            .on_hover_text(tr("Sposta il testo lungo il tracciato (si può anche trascinare il testo)"))
+                            .changed();
+                    } else {
+                        changed |= ui
+                            .add_enabled(st.eval != 0, crate::i18n::dv(&mut st.offset).speed(0.2).min_decimals(0))
+                            .on_hover_text(tr("Si somma al contatore o alla riga CSV per questo testo"))
+                            .changed();
+                    }
+                });
                 ui.end_row();
             });
             if changed {
                 if let Some(id) = sel_text {
                     app.checkpoint(frame_nr);
-                    let outline = crate::text::text_outline(&app.new_text, app.text_size, &app.text_font);
-                    let (t, sz, f) = (app.new_text.clone(), app.text_size, app.text_font.clone());
+                    let (t, sz, f, style) = (app.new_text.clone(), app.text_size, app.text_font.clone(), app.text_style.clone());
                     if let Some(s) = app.doc.find_mut(id) {
-                        s.geom = Geometry::Text { text: t, size: sz, font: f, outline };
+                        s.geom = Geometry::Text { text: t, size: sz, font: f, outline: Vec::new(), style };
+                        s.geom.rebuild_text();
                     }
                 }
             }
+
+        });
         });
     });
 }
@@ -2426,7 +2524,7 @@ fn shape_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
                 changed |= ui.add(crate::i18n::dv(sides).range(3..=64)).changed();
                 ui.end_row();
             }
-            Geometry::Text { text, size, font, outline } => {
+            Geometry::Text { text, size, font, outline, style } => {
                 ui.label(tr("Testo"));
                 let r = ui.add(egui::TextEdit::multiline(text).desired_rows(2).desired_width(240.0));
                 ui.end_row();
@@ -2445,7 +2543,7 @@ fn shape_tab(app: &mut RayEtch, ui: &mut egui::Ui) {
                 });
                 ui.end_row();
                 if r.changed() || r2.changed() || fc {
-                    *outline = crate::text::text_outline(text, *size, font);
+                    *outline = crate::text::styled_outline(&crate::text::shown_text(text, style), *size, font, style);
                     changed = true;
                 }
             }
@@ -2761,7 +2859,8 @@ fn paint_switch(p: &egui::Painter, rect: Rect, on: bool, enabled: bool) {
 
 /// One size for every green/red switch in every window (the person's request: all the coloured
 /// switches the same size), tall enough to read at a glance and still within a normal row.
-pub const SWITCH_SIZE: egui::Vec2 = egui::Vec2::new(30.0, 16.0);
+/// 24 × 13 (was 30 × 16; the person asked for smaller switches to win back room in the bars).
+pub const SWITCH_SIZE: egui::Vec2 = egui::Vec2::new(24.0, 13.0);
 
 /// Green when on, red when off, without a label.
 fn pill_toggle(ui: &mut egui::Ui, on: &mut bool) -> bool {

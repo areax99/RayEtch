@@ -380,10 +380,10 @@ pub fn text_edit_window(app: &mut RayEtch, ctx: &egui::Context) {
         Some(true) => {
             app.checkpoint_now();
             if let Some(s) = app.doc.shapes.iter_mut().find(|s| s.id == id) {
-                if let crate::model::Geometry::Text { text: t, size, font, outline } = &mut s.geom {
+                if let crate::model::Geometry::Text { text: t, .. } = &mut s.geom {
                     *t = text;
-                    *outline = crate::text::text_outline(t, *size, font);
                 }
+                s.geom.rebuild_text();
             }
         }
         Some(false) => {}

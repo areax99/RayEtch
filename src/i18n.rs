@@ -370,8 +370,8 @@ static ROWS: &[(&str, [&str; 4])] = &[
     ("Allinea centri verticali", ["Align Vertical Centers", "Alinear centros verticales", "Vertikale Mitten ausrichten", "Aligner les centres verticaux"]),
     ("Allinea centri", ["Align Centers", "Alinear centros", "Mitten ausrichten", "Aligner les centres"]),
     ("Distribuisci", ["Distribute", "Distribuir", "Verteilen", "Répartir"]),
-    ("Spaziatura orizzontale", ["Horizontal Spacing", "Espaciado horizontal", "Horizontaler Abstand", "Espacement horizontal"]),
-    ("Spaziatura verticale", ["Vertical Spacing", "Espaciado vertical", "Vertikaler Abstand", "Espacement vertical"]),
+    ("Spaziatura orizzontale", ["Horizontal Spacing", "Espaciado horizontal", "Abstand horiz.", "Espacement horizontal"]),
+    ("Spaziatura verticale", ["Vertical Spacing", "Espaciado vertical", "Abstand vert.", "Espacement vertical"]),
     ("Centri orizzontali", ["Horizontal Centers", "Centros horizontales", "Horizontale Mitten", "Centres horizontaux"]),
     ("Centri verticali", ["Vertical Centers", "Centros verticales", "Vertikale Mitten", "Centres verticaux"]),
     ("Distribuisci spaziatura orizzontale", ["Distribute Horizontal Spacing", "Distribuir espaciado horizontal", "Horizontal gleichmäßig verteilen", "Répartir l'espacement horizontal"]),
@@ -1587,6 +1587,28 @@ static ROWS: &[(&str, [&str; 4])] = &[
     ("Unicode", ["Unicode", "Unicode", "Unicode", "Unicode"]),
     ("Unione/CSV", ["Merge/CSV", "Combinación/CSV", "Zusammenführen/CSV", "Fusion/CSV"]),
     ("Unità e Griglie", ["Units and Grids", "Unidades y cuadrículas", "Einheiten und Raster", "Unités et grilles"]),
+    // text toolbar options (picture 40)
+    ("Acceso: ridimensionando il testo le lettere si allungano; spento: il testo mantiene le proporzioni", ["On: resizing the text stretches the letters; off: the text keeps its proportions", "Activado: al redimensionar el texto las letras se estiran; desactivado: el texto mantiene sus proporciones", "An: beim Skalieren werden die Buchstaben gestreckt; aus: der Text behält seine Proportionen", "Activé : redimensionner le texte étire les lettres ; désactivé : le texte garde ses proportions"]),
+    ("Allinea X", ["Align X", "Alinear X", "X ausrichten", "Aligner X"]),
+    ("Allinea Y", ["Align Y", "Alinear Y", "Y ausrichten", "Aligner Y"]),
+    ("Alto", ["Top", "Arriba", "Oben", "Haut"]),
+    ("Basso", ["Bottom", "Abajo", "Unten", "Bas"]),
+    ("Centrale", ["Center", "Centro", "Mitte", "Centre"]),
+    ("Corsivo", ["Italic", "Cursiva", "Kursiv", "Italique"]),
+    ("Destra", ["Right", "Derecha", "Rechts", "Droite"]),
+    ("Distorsione", ["Distort", "Distorsionar", "Verzerren", "Déformer"]),
+    ("Grassetto", ["Bold", "Negrita", "Fett", "Gras"]),
+    ("Maiuscolo", ["Upper case", "Mayúsculas", "Großbuchstaben", "Majuscules"]),
+    ("Saldato", ["Welded", "Soldado", "Verschweißt", "Soudé"]),
+    ("Si somma al contatore o alla riga CSV per questo testo", ["Added to the counter or CSV row for this text", "Se suma al contador o a la fila CSV para este texto", "Wird für diesen Text zum Zähler oder zur CSV-Zeile addiert", "S'ajoute au compteur ou à la ligne CSV pour ce texte"]),
+    ("Sinistra", ["Left", "Izquierda", "Links", "Gauche"]),
+    // variable text explanation
+    ("Testo variabile: il testo è un modello che RayEtch riempie da solo a ogni lavoro.\nData/Ora: la data e l'ora attuali (es. dd/MM/yyyy hh:mm; il testo fisso va tra apici, es. 'Lotto' dd/MM).\nNumero di serie: un numero che cresce a ogni lavoro (es. 000d → 0001, 0002…).\nUnione/CSV: una colonna della riga attuale di un file CSV (%0 la prima, %1 la seconda…).\nContatore e file CSV si impostano nella scheda Testo variabile.", ["Variable text: the text is a pattern RayEtch fills in by itself for each job.\nDate/Time: the current date and time (e.g. dd/MM/yyyy hh:mm; fixed text goes in quotes, e.g. 'Batch' dd/MM).\nSerial number: a number that goes up with each job (e.g. 000d → 0001, 0002…).\nMerge/CSV: a column of the current row of a CSV file (%0 the first, %1 the second…).\nThe counter and the CSV file are set in the Variable text tab.", "Texto variable: el texto es un modelo que RayEtch rellena solo en cada trabajo.\nFecha/Hora: la fecha y hora actuales (p. ej. dd/MM/yyyy hh:mm; el texto fijo va entre comillas, p. ej. 'Lote' dd/MM).\nNúmero de serie: un número que crece en cada trabajo (p. ej. 000d → 0001, 0002…).\nCombinación/CSV: una columna de la fila actual de un archivo CSV (%0 la primera, %1 la segunda…).\nEl contador y el archivo CSV se ajustan en la pestaña Texto variable.", "Variabler Text: der Text ist ein Muster, das RayEtch bei jedem Auftrag selbst ausfüllt.\nDatum/Uhrzeit: aktuelles Datum und Uhrzeit (z. B. dd/MM/yyyy hh:mm; fester Text in Anführungszeichen, z. B. 'Charge' dd/MM).\nSeriennummer: eine Zahl, die bei jedem Auftrag steigt (z. B. 000d → 0001, 0002…).\nZusammenführen/CSV: eine Spalte der aktuellen Zeile einer CSV-Datei (%0 die erste, %1 die zweite…).\nZähler und CSV-Datei werden im Reiter Variabler Text eingestellt.", "Texte variable : le texte est un modèle que RayEtch remplit tout seul à chaque travail.\nDate/Heure : la date et l'heure actuelles (ex. dd/MM/yyyy hh:mm ; le texte fixe se met entre apostrophes, ex. 'Lot' dd/MM).\nNuméro de série : un nombre qui augmente à chaque travail (ex. 000d → 0001, 0002…).\nFusion/CSV : une colonne de la ligne actuelle d'un fichier CSV (%0 la première, %1 la deuxième…).\nLe compteur et le fichier CSV se règlent dans l'onglet Texte variable."]),
+    // short label for the text bar's Offset
+    ("Offset testo", ["Offset", "Despl.", "Versatz", "Décalage"]),
+    // text on a path
+    ("Testo applicato al tracciato: trascinalo per farlo scorrere lungo il tracciato", ["Text applied to the path: drag it to slide it along the path", "Texto aplicado al trazado: arrástralo para deslizarlo a lo largo del trazado", "Text auf Pfad angewendet: ziehen, um ihn entlang des Pfads zu verschieben", "Texte appliqué au tracé : faites-le glisser pour le déplacer le long du tracé"]),
+    ("Sposta il testo lungo il tracciato (si può anche trascinare il testo)", ["Moves the text along the path (you can also drag the text)", "Mueve el texto a lo largo del trazado (también se puede arrastrar el texto)", "Verschiebt den Text entlang des Pfads (der Text lässt sich auch ziehen)", "Déplace le texte le long du tracé (on peut aussi faire glisser le texte)"]),
 ];
 
 #[cfg(test)]

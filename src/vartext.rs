@@ -87,6 +87,30 @@ fn with<R>(f: impl FnOnce(&VarText) -> R) -> R {
 }
 
 /// The content as it will be encoded: evaluated by its type with the counter + `offset`.
+/// Whether a text already holds codes for a variable type (a date pattern, a serial run, a CSV
+/// column), so switching to that type keeps it.
+pub fn looks_like_pattern(text: &str, eval: usize) -> bool {
+    match eval {
+        EVAL_DATE => ["yy", "MM", "dd", "hh", "HH", "mm", "ss"].iter().any(|c| text.contains(c)),
+        EVAL_SERIAL => {
+            let c: Vec<char> = text.chars().collect();
+            c.windows(2).any(|w| (w[0] == '0' || w[0] == w[1]) && matches!(w[1], 'd' | 'h' | 'H'))
+        }
+        EVAL_MERGE => text.as_bytes().windows(2).any(|w| w[0] == b'%' && w[1].is_ascii_digit()),
+        _ => true,
+    }
+}
+
+/// The pattern a text starts from when it becomes Data/Ora, Numero di serie or Unione/CSV.
+pub fn starter_pattern(eval: usize) -> &'static str {
+    match eval {
+        EVAL_DATE => "dd/MM/yyyy",
+        EVAL_SERIAL => "000d",
+        EVAL_MERGE => "%0",
+        _ => "",
+    }
+}
+
 pub fn evaluate(content: &str, eval: usize, offset: i64) -> String {
     match eval {
         EVAL_DATE => format_datetime(content, &chrono::Local::now()),
@@ -456,5 +480,22 @@ mod tests {
         assert_eq!(format_datetime("yyyy-MM-dd hh:mm:ss", &t), "2026-03-07 09:05:02");
         assert_eq!(format_datetime("'Lotto' yy.M.d", &t), "Lotto 26.3.7");
         assert_eq!(control_chars("A<RS>B<GS>C<XYZ>"), "A\u{1e}B\u{1d}C<XYZ>");
+    }
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+
+    /// A plain word isn't a pattern (it gets a starter one); real patterns are kept.
+    #[test]
+    fn starter_only_for_plain_text() {
+        assert!(!looks_like_pattern("RayEtch", EVAL_DATE));
+        assert!(looks_like_pattern("'Lotto' dd/MM/yyyy", EVAL_DATE));
+        assert!(!looks_like_pattern("RayEtch", EVAL_SERIAL));
+        assert!(looks_like_pattern("SN-0000d", EVAL_SERIAL));
+        assert!(!looks_like_pattern("Nome", EVAL_MERGE));
+        assert!(looks_like_pattern("%0 %1", EVAL_MERGE));
+        assert_eq!(format_serial(starter_pattern(EVAL_SERIAL), 7), "0007");
     }
 }
