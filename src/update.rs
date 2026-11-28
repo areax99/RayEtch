@@ -275,7 +275,23 @@ fn install_archive_to(file: &std::path::Path, dir: &std::path::Path, target: Tar
         let _ = std::fs::remove_file(&old);
     }
     let _ = std::fs::remove_dir_all(dir);
+    // the update folder is named rayetch-update-<version> (Checker::install)
+    if let Some(v) = dir.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix("rayetch-update-")) {
+        note_installed_version(&target, v);
+    }
     Ok(target)
+}
+
+/// A copy installed with the Windows setup (its Uninstall.exe beside it) shows the new version in
+/// Settings › Apps too: the setup's own entry (HKCU …\Uninstall\RayEtch, DisplayVersion) is updated.
+fn note_installed_version(target: &std::path::Path, v: &str) {
+    if !cfg!(windows) || !target.parent().is_some_and(|d| d.join("Uninstall.exe").exists()) {
+        return;
+    }
+    let mut cmd = std::process::Command::new("reg");
+    cmd.args(["add", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\RayEtch", "/v", "DisplayVersion", "/t", "REG_SZ", "/d", v, "/f"]);
+    no_console(&mut cmd);
+    let _ = cmd.output();
 }
 
 /// Put `new` in place of `target` in a folder only the administrator may change: the system asks
@@ -444,9 +460,17 @@ fn fetch() -> Result<Vec<Release>, String> {
 fn asset_for_this_computer(assets: &[(String, String)]) -> Option<(String, String)> {
     let os = if cfg!(target_os = "macos") { "-macos-" } else if cfg!(windows) { "-windows-" } else { "-linux-" };
     let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
-    let mine: Vec<&(String, String)> = assets.iter().filter(|(n, _)| n.contains(os)).collect();
+    asset_for(assets, os, arch)
+}
+
+/// The archive for one system ("-macos-", "-windows-", "-linux-") and processor ("arm64", "x86_64").
+fn asset_for(assets: &[(String, String)], os: &str, arch: &str) -> Option<(String, String)> {
+    // only archives the updater can unpack: a Windows release also has a "-setup.exe" installer
+    // for each processor, which must not be picked in place of its .zip
+    let archive = |n: &str| n.ends_with(".zip") || n.ends_with(".tar.gz");
+    let mine: Vec<&(String, String)> = assets.iter().filter(|(n, _)| n.contains(os) && archive(n)).collect();
     let pick = |want: &str| mine.iter().find(|(n, _)| n.contains(&format!("{os}{want}"))).map(|a| (*a).clone());
-    if cfg!(target_os = "macos") {
+    if os == "-macos-" {
         pick("universal").or_else(|| pick(arch))
     } else {
         pick(arch).or_else(|| (arch == "arm64").then(|| pick("aarch64")).flatten())
@@ -520,6 +544,30 @@ mod tests {
         let list = vec![rel("1.0.0-beta.1", true), rel("1.0.0-beta.3", true), rel("1.0.0-beta.2", true)];
         assert_eq!(pick_newer(&list, "1.0.0-beta.1").unwrap().version, "1.0.0-beta.3");
         assert!(pick_newer(&list, "1.0.0-beta.3").is_none());
+    }
+
+    /// The names of release v1.0.0-beta.4 (Windows has a setup .exe beside each .zip): every
+    /// system gets the archive the updater can unpack, never the setup.
+    #[test]
+    fn picks_archive_not_setup() {
+        let names = [
+            "RayEtch-v1.0.0-beta.4-linux-aarch64-gnu-installer.tar.gz",
+            "RayEtch-v1.0.0-beta.4-linux-x86_64-gnu-installer.tar.gz",
+            "RayEtch-v1.0.0-beta.4-macos-arm64.zip",
+            "RayEtch-v1.0.0-beta.4-macos-universal.zip",
+            "RayEtch-v1.0.0-beta.4-macos-x86_64.zip",
+            "RayEtch-v1.0.0-beta.4-windows-aarch64-setup.exe",
+            "RayEtch-v1.0.0-beta.4-windows-aarch64.zip",
+            "RayEtch-v1.0.0-beta.4-windows-x86_64-setup.exe",
+            "RayEtch-v1.0.0-beta.4-windows-x86_64.zip",
+        ];
+        let a: Vec<(String, String)> = names.iter().map(|n| (n.to_string(), n.to_string())).collect();
+        let got = |os, arch| asset_for(&a, os, arch).map(|x| x.0).unwrap_or_default();
+        assert_eq!(got("-windows-", "x86_64"), "RayEtch-v1.0.0-beta.4-windows-x86_64.zip");
+        assert_eq!(got("-windows-", "arm64"), "RayEtch-v1.0.0-beta.4-windows-aarch64.zip");
+        assert_eq!(got("-linux-", "x86_64"), "RayEtch-v1.0.0-beta.4-linux-x86_64-gnu-installer.tar.gz");
+        assert_eq!(got("-linux-", "arm64"), "RayEtch-v1.0.0-beta.4-linux-aarch64-gnu-installer.tar.gz");
+        assert_eq!(got("-macos-", "arm64"), "RayEtch-v1.0.0-beta.4-macos-universal.zip");
     }
 
     #[test]
